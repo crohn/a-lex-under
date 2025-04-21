@@ -1,7 +1,13 @@
 use std::mem;
 
 const BACKSLASH: char = '\\';
+const CARRIAGE_RETURN: char = '\r';
 const DOUBLE_QUOTES: char = '"';
+const LOWERCASE_N: char = 'n';
+const LOWERCASE_R: char = 'r';
+const LOWERCASE_T: char = 't';
+const NEWLINE: char = '\n';
+const TAB: char = '\t';
 const UNDERSCORE: char = '_';
 
 enum State {
@@ -122,40 +128,22 @@ impl Scanner {
         tokens: &mut Vec<Token>,
     ) -> Result<State, ()> {
         match c {
-            BACKSLASH => {
-                if self.escape {
-                    self.escape = false;
-                    self.buf.push(c);
-                } else {
-                    self.escape = true;
-                }
-                Ok(State::EscapedStringLiteral)
-            }
-            DOUBLE_QUOTES => {
-                if self.escape {
-                    self.escape = false;
-                    self.buf.push(c);
-                    Ok(State::EscapedStringLiteral)
-                } else if matches!(self.stack.last(), Some(&DOUBLE_QUOTES)) {
-                    self.stack.pop();
-                    let content = if self.buf.is_empty() {
-                        String::new()
-                    } else {
-                        mem::take(&mut self.buf)
-                    };
-                    tokens.push(Token::StringLiteral(content));
-                    Ok(State::Begin)
-                } else {
-                    Err(())
-                }
-            }
+            BACKSLASH => self.in_literal_backslash(c),
+            DOUBLE_QUOTES => self.in_literal_quotes(c, tokens),
+            LOWERCASE_N => self.in_literal_whitespace(c, NEWLINE),
+            LOWERCASE_R => self.in_literal_whitespace(c, CARRIAGE_RETURN),
+            LOWERCASE_T => self.in_literal_whitespace(c, TAB),
             _ if c.is_whitespace() => {
                 self.buf.push(c);
                 Ok(State::EscapedStringLiteral)
             }
             _ if !c.is_control() => {
-                self.buf.push(c);
-                Ok(State::EscapedStringLiteral)
+                if self.escape {
+                    Err(()) // invalid escape sequence
+                } else {
+                    self.buf.push(c);
+                    Ok(State::EscapedStringLiteral)
+                }
             }
             _ if c.is_control() => Err(()),
             _ => unreachable!(),
@@ -188,6 +176,45 @@ impl Scanner {
             }
             _ => Err(()),
         }
+    }
+
+    fn in_literal_backslash(&mut self, c: char) -> Result<State, ()> {
+        if self.escape {
+            self.escape = false;
+            self.buf.push(c);
+        } else {
+            self.escape = true;
+        }
+        Ok(State::EscapedStringLiteral)
+    }
+
+    fn in_literal_quotes(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+        if self.escape {
+            self.escape = false;
+            self.buf.push(c);
+            Ok(State::EscapedStringLiteral)
+        } else if matches!(self.stack.last(), Some(&DOUBLE_QUOTES)) {
+            self.stack.pop();
+            let content = if self.buf.is_empty() {
+                String::new()
+            } else {
+                mem::take(&mut self.buf)
+            };
+            tokens.push(Token::StringLiteral(content));
+            Ok(State::Begin)
+        } else {
+            Err(())
+        }
+    }
+
+    fn in_literal_whitespace(&mut self, c: char, escaped: char) -> Result<State, ()> {
+        if self.escape {
+            self.escape = false;
+            self.buf.push(escaped);
+        } else {
+            self.buf.push(c);
+        }
+        Ok(State::EscapedStringLiteral)
     }
 }
 
@@ -253,6 +280,9 @@ mod test {
         let tokens = Scanner::new().scan("\"\t\n\r\"");
         assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
 
+        let tokens = Scanner::new().scan("\"\\t\\n\\r\"");
+        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
+
         let tokens = Scanner::new().scan("\"v@lid\ts3quence アキラ\"");
         assert_eq!(
             tokens,
@@ -262,6 +292,12 @@ mod test {
         );
 
         let tokens = Scanner::new().scan("\"");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("\"\\z\"");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("\"\\ア\"");
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("\"\\\"");
