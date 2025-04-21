@@ -153,7 +153,12 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::EscapedStringLiteral)
             }
-            _ => Err(()),
+            _ if !c.is_control() => {
+                self.buf.push(c);
+                Ok(State::EscapedStringLiteral)
+            }
+            _ if c.is_control() => Err(()),
+            _ => unreachable!(),
         }
     }
 
@@ -247,5 +252,22 @@ mod test {
 
         let tokens = Scanner::new().scan("\"\t\n\r\"");
         assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
+
+        let tokens = Scanner::new().scan("\"v@lid\ts3quence アキラ\"");
+        assert_eq!(
+            tokens,
+            Ok(vec![Token::StringLiteral(
+                "v@lid\ts3quence アキラ".to_string()
+            )])
+        );
+
+        let tokens = Scanner::new().scan("\"");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("\"\\\"");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("\"foo");
+        assert_eq!(tokens, Err(()));
     }
 }
