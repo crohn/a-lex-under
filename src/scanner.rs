@@ -1,19 +1,25 @@
 use std::mem;
 
+const BACKSLASH: char = '\\';
+const DOUBLE_QUOTES: char = '"';
 const UNDERSCORE: char = '_';
 
 enum State {
     Begin,
+    EscapedStringLiteral,
     Identifier,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
+    StringLiteral(String),
 }
 
 pub struct Scanner {
     buf: String,
+    escape: bool,
+    stack: Vec<char>,
     state: State,
 }
 
@@ -21,6 +27,8 @@ impl Default for Scanner {
     fn default() -> Self {
         Self {
             buf: String::new(),
+            escape: false,
+            stack: Vec::new(),
             state: State::Begin,
         }
     }
@@ -42,6 +50,7 @@ impl Scanner {
         for c in input.chars() {
             self.state = match self.state {
                 State::Begin => self.handle_begin(c),
+                State::EscapedStringLiteral => self.handle_escaped_string_literal(c, &mut tokens),
                 State::Identifier => self.handle_identifier(c, &mut tokens),
             }?;
         }
@@ -59,11 +68,18 @@ impl Scanner {
                     return Err(());
                 }
             }
+            State::EscapedStringLiteral => {} // main error is unbalance
             State::Identifier => {
                 if !self.buf.is_empty() {
                     tokens.push(Token::Identifier(mem::take(&mut self.buf)))
                 }
             }
+        }
+
+        // There is an unbalanced token somewhere. Stack needs to keep track of
+        // col and row.
+        if !self.stack.is_empty() {
+            return Err(());
         }
 
         Ok(tokens)
@@ -74,13 +90,69 @@ impl Scanner {
     ///
     /// Any lexeme starting with an UTF-8 alphabetic character produces an
     /// `Identifier` token.
+    ///
+    /// Any lexeme starting with quotation mark (`"`) produces a `StringLiteral`
+    /// token.
     fn handle_begin(&mut self, c: char) -> Result<State, ()> {
         match c {
+            DOUBLE_QUOTES => {
+                self.stack.push(c);
+                Ok(State::EscapedStringLiteral)
+            }
             _ if c.is_alphabetic() => {
                 self.buf.push(c);
                 Ok(State::Identifier)
             }
             _ if c.is_whitespace() => Ok(State::Begin),
+            _ => Err(()),
+        }
+    }
+
+    /// The scanner is in `EscapedStringLiteral` state while processing a
+    /// `StringLiteral` token.
+    ///
+    /// The token carries the content, excluding the wrapping quotation marks
+    /// and converts escape sequences into whitespaces or UTF-8 characters.
+    ///
+    /// When entering this state, the scanner has already processed the opening
+    /// double quotes, pushing it into the stack to check the closing balance.
+    fn handle_escaped_string_literal(
+        &mut self,
+        c: char,
+        tokens: &mut Vec<Token>,
+    ) -> Result<State, ()> {
+        match c {
+            BACKSLASH => {
+                if self.escape {
+                    self.escape = false;
+                    self.buf.push(c);
+                } else {
+                    self.escape = true;
+                }
+                Ok(State::EscapedStringLiteral)
+            }
+            DOUBLE_QUOTES => {
+                if self.escape {
+                    self.escape = false;
+                    self.buf.push(c);
+                    Ok(State::EscapedStringLiteral)
+                } else if matches!(self.stack.last(), Some(&DOUBLE_QUOTES)) {
+                    self.stack.pop();
+                    let content = if self.buf.is_empty() {
+                        String::new()
+                    } else {
+                        mem::take(&mut self.buf)
+                    };
+                    tokens.push(Token::StringLiteral(content));
+                    Ok(State::Begin)
+                } else {
+                    Err(())
+                }
+            }
+            _ if c.is_whitespace() => {
+                self.buf.push(c);
+                Ok(State::EscapedStringLiteral)
+            }
             _ => Err(()),
         }
     }
@@ -163,5 +235,17 @@ mod test {
 
         let tokens = Scanner::new().scan("123");
         assert_eq!(tokens, Err(()));
+    }
+
+    #[test]
+    fn token_string_literal() {
+        let tokens = Scanner::new().scan("\"\"");
+        assert_eq!(tokens, Ok(vec![Token::StringLiteral("".to_string())]));
+
+        let tokens = Scanner::new().scan("\"\\\"\"");
+        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\"".to_string())]));
+
+        let tokens = Scanner::new().scan("\"\t\n\r\"");
+        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
     }
 }
