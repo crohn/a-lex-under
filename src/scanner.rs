@@ -2,10 +2,13 @@ use std::mem;
 
 const BACKSLASH: char = '\\';
 const CARRIAGE_RETURN: char = '\r';
+const CURLY_BRACKET_LEFT: char = '{';
+const CURLY_BRACKET_RIGHT: char = '}';
 const DOUBLE_QUOTES: char = '"';
 const LOWERCASE_N: char = 'n';
 const LOWERCASE_R: char = 'r';
 const LOWERCASE_T: char = 't';
+const LOWERCASE_U: char = 'u';
 const NEWLINE: char = '\n';
 const TAB: char = '\t';
 const UNDERSCORE: char = '_';
@@ -14,6 +17,7 @@ enum State {
     Begin,
     EscapedStringLiteral,
     Identifier,
+    UnicodeEscapeSequence,
 }
 
 #[derive(Debug, PartialEq)]
@@ -27,6 +31,7 @@ pub struct Scanner {
     escape: bool,
     stack: Vec<char>,
     state: State,
+    utf_codepoint: u32,
 }
 
 impl Default for Scanner {
@@ -36,6 +41,7 @@ impl Default for Scanner {
             escape: false,
             stack: Vec::new(),
             state: State::Begin,
+            utf_codepoint: 0,
         }
     }
 }
@@ -58,6 +64,7 @@ impl Scanner {
                 State::Begin => self.handle_begin(c),
                 State::EscapedStringLiteral => self.handle_escaped_string_literal(c, &mut tokens),
                 State::Identifier => self.handle_identifier(c, &mut tokens),
+                State::UnicodeEscapeSequence => self.handle_unicode_escape_sequence(c),
             }?;
         }
 
@@ -74,12 +81,13 @@ impl Scanner {
                     return Err(());
                 }
             }
-            State::EscapedStringLiteral => {} // main error is unbalance
+            State::EscapedStringLiteral => {} // main error is unbalance "
             State::Identifier => {
                 if !self.buf.is_empty() {
                     tokens.push(Token::Identifier(mem::take(&mut self.buf)))
                 }
             }
+            State::UnicodeEscapeSequence => {} // main error is unbalance {
         }
 
         // There is an unbalanced token somewhere. Stack needs to keep track of
@@ -133,6 +141,7 @@ impl Scanner {
             LOWERCASE_N => self.in_literal_whitespace(c, NEWLINE),
             LOWERCASE_R => self.in_literal_whitespace(c, CARRIAGE_RETURN),
             LOWERCASE_T => self.in_literal_whitespace(c, TAB),
+            LOWERCASE_U => self.in_literal_unicode(c),
             _ if c.is_whitespace() => {
                 self.buf.push(c);
                 Ok(State::EscapedStringLiteral)
@@ -178,6 +187,49 @@ impl Scanner {
         }
     }
 
+    /// The scanner is in `UnicodeEscapeSequence` state after a `\u` escape
+    /// sequence is encountered.
+    ///
+    /// The escape sequence continues with `{<HEX_DIGITS>}`.
+    fn handle_unicode_escape_sequence(&mut self, c: char) -> Result<State, ()> {
+        match c {
+            CURLY_BRACKET_LEFT => {
+                if matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
+                    Err(()) // cannot push { over {
+                } else {
+                    self.stack.push(c);
+                    Ok(State::UnicodeEscapeSequence)
+                }
+            }
+            CURLY_BRACKET_RIGHT => {
+                if matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
+                    if let Some(character) = char::from_u32(mem::take(&mut self.utf_codepoint)) {
+                        if character.is_control() && !character.is_whitespace() {
+                            Err(()) // control characters are not allowed unless they are whitespace
+                        } else {
+                            self.stack.pop();
+                            self.buf.push(character);
+                            Ok(State::EscapedStringLiteral)
+                        }
+                    } else {
+                        Err(()) // invalid escape sequence
+                    }
+                } else {
+                    // unbalanced closing curly bracket
+                    Err(())
+                }
+            }
+            _ => {
+                if let Some(value) = c.to_digit(16) {
+                    self.utf_codepoint = self.utf_codepoint * 16 + value;
+                    Ok(State::UnicodeEscapeSequence)
+                } else {
+                    Err(()) // invalid hex digit
+                }
+            }
+        }
+    }
+
     fn in_literal_backslash(&mut self, c: char) -> Result<State, ()> {
         if self.escape {
             self.escape = false;
@@ -204,6 +256,18 @@ impl Scanner {
             Ok(State::Begin)
         } else {
             Err(())
+        }
+    }
+
+    /// The scanner receiving a `u` character checks whether it's a `\u` escape
+    /// sequence or just the `u` ASCII character.
+    fn in_literal_unicode(&mut self, c: char) -> Result<State, ()> {
+        if self.escape {
+            self.escape = false;
+            Ok(State::UnicodeEscapeSequence)
+        } else {
+            self.buf.push(c);
+            Ok(State::EscapedStringLiteral)
         }
     }
 
@@ -283,6 +347,12 @@ mod test {
         let tokens = Scanner::new().scan("\"\t\n\r\"");
         assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
 
+        let tokens = Scanner::new().scan("\"\\u{9}\\u{a}\\u{d}\\u{20}\"");
+        assert_eq!(
+            tokens,
+            Ok(vec![Token::StringLiteral("\t\n\r ".to_string())])
+        );
+
         let tokens = Scanner::new().scan("\"\\t\\n\\r\"");
         assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
 
@@ -294,7 +364,29 @@ mod test {
             )])
         );
 
+        let tokens = Scanner::new().scan("\"\\u{30a2}\\u{30ad}\\u{30e9}\"");
+        assert_eq!(tokens, Ok(vec![Token::StringLiteral("アキラ".to_string())]));
+
+        let tokens = Scanner::new().scan("\"\\u{30a2}\\u{30ad}\\u{30e9}\"");
+        assert_eq!(
+            tokens,
+            Ok(vec![Token::StringLiteral(
+                "\u{30a2}\u{30ad}\u{30e9}".to_string()
+            )])
+        );
+
+        // invalid codepoint
+        let tokens = Scanner::new().scan("\"\\u{d801}\"");
+        assert_eq!(tokens, Err(()));
+
+        // invalid character
+        let tokens = Scanner::new().scan("\"hello world\\{0}\"");
+        assert_eq!(tokens, Err(()));
+
         // invalid escape sequence
+        let tokens = Scanner::new().scan("\"\\u\"");
+        assert_eq!(tokens, Err(()));
+
         let tokens = Scanner::new().scan("\"\\z\"");
         assert_eq!(tokens, Err(()));
 
@@ -309,6 +401,10 @@ mod test {
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("\"foo");
+        assert_eq!(tokens, Err(()));
+
+        // unbalanced curly bracer
+        let tokens = Scanner::new().scan("\"\\u{7f");
         assert_eq!(tokens, Err(()));
     }
 }
