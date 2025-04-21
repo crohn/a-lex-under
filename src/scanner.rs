@@ -277,6 +277,9 @@ mod test {
         let tokens = Scanner::new().scan("\"\\\"\"");
         assert_eq!(tokens, Ok(vec![Token::StringLiteral("\"".to_string())]));
 
+        let tokens = Scanner::new().scan("\"\\\\\"");
+        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\\".to_string())]));
+
         let tokens = Scanner::new().scan("\"\t\n\r\"");
         assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
 
@@ -291,13 +294,15 @@ mod test {
             )])
         );
 
-        let tokens = Scanner::new().scan("\"");
-        assert_eq!(tokens, Err(()));
-
+        // invalid escape sequence
         let tokens = Scanner::new().scan("\"\\z\"");
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("\"\\ア\"");
+        assert_eq!(tokens, Err(()));
+
+        // unbalanced quotes
+        let tokens = Scanner::new().scan("\"");
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("\"\\\"");
