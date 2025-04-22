@@ -5,6 +5,7 @@ const CARRIAGE_RETURN: char = '\r';
 const CURLY_BRACKET_LEFT: char = '{';
 const CURLY_BRACKET_RIGHT: char = '}';
 const DOUBLE_QUOTES: char = '"';
+const HYPHEN: char = '-';
 const LOWERCASE_N: char = 'n';
 const LOWERCASE_R: char = 'r';
 const LOWERCASE_T: char = 't';
@@ -17,12 +18,16 @@ enum State {
     Begin,
     EscapedStringLiteral,
     Identifier,
+    LongOption,
+    Option,
+    ShortOption,
     UnicodeEscapeSequence,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
+    ShortOption(String),
     StringLiteral(String),
 }
 
@@ -64,6 +69,9 @@ impl Scanner {
                 State::Begin => self.handle_begin(c),
                 State::EscapedStringLiteral => self.handle_escaped_string_literal(c, &mut tokens),
                 State::Identifier => self.handle_identifier(c, &mut tokens),
+                State::LongOption => unimplemented!(), // TODO
+                State::Option => self.handle_option(c),
+                State::ShortOption => self.handle_short_option(c, &mut tokens),
                 State::UnicodeEscapeSequence => self.handle_unicode_escape_sequence(c),
             }?;
         }
@@ -81,6 +89,15 @@ impl Scanner {
                     return Err(());
                 }
             }
+            State::LongOption => unimplemented!(), // TODO
+            State::ShortOption => {
+                if self.buf.chars().count() == 1 {
+                    tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
+                } else {
+                    return Err(());
+                }
+            }
+            State::Option => return Err(()), // unexpected end of input, input ends with '-'
             State::EscapedStringLiteral => {} // main error is unbalance "
             State::Identifier => {
                 if !self.buf.is_empty() {
@@ -107,12 +124,16 @@ impl Scanner {
     ///
     /// Any lexeme starting with quotation mark (`"`) produces a `StringLiteral`
     /// token.
+    ///
+    /// Any lexeme starting with a single hyphen (`-`) produces a `ShortOption`.
+    /// Any lexeme starting with a double hyphen (`--`) produces a `LongOption`.
     fn handle_begin(&mut self, c: char) -> Result<State, ()> {
         match c {
             DOUBLE_QUOTES => {
                 self.stack.push(c);
                 Ok(State::EscapedStringLiteral)
             }
+            HYPHEN => Ok(State::Option),
             _ if c.is_alphabetic() => {
                 self.buf.push(c);
                 Ok(State::Identifier)
@@ -185,6 +206,33 @@ impl Scanner {
             }
             _ => Err(()),
         }
+    }
+
+    /// The scanner is in `Option` state after a `'-'` is encountered.
+    ///
+    /// From this state, it can transition to long or short option, according to
+    /// the value of `c`.
+    fn handle_option(&mut self, c: char) -> Result<State, ()> {
+        match c {
+            HYPHEN => Ok(State::LongOption),
+            _ if c.is_alphanumeric() => {
+                self.buf.push(c);
+                Ok(State::ShortOption)
+            }
+            _ => Err(()), // invalid character
+        }
+    }
+
+    /// The scanner is in `ShortOption` state after a `-<CHAR>` input is
+    /// encountered, thus we expect a non-empty buffer. Also <CHAR> is an
+    /// alphanumeric UTF-8 char.
+    fn handle_short_option(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+        if !c.is_whitespace() {
+            return Err(()); // illegal character, this means that we had a '-ab' input
+            // this prevents that empty option is pushed into tokens, '- '
+        }
+        tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
+        Ok(State::Begin)
     }
 
     /// The scanner is in `UnicodeEscapeSequence` state after a `\u` escape
@@ -330,6 +378,30 @@ mod test {
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("123");
+        assert_eq!(tokens, Err(()));
+    }
+
+    #[test]
+    fn token_short_option() {
+        let tokens = Scanner::new().scan("-a -ア");
+        assert_eq!(
+            tokens,
+            Ok(vec![
+                Token::ShortOption("a".to_string()),
+                Token::ShortOption("ア".to_string())
+            ])
+        );
+
+        let tokens = Scanner::new().scan("-");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("-?");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("- ");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("-ab");
         assert_eq!(tokens, Err(()));
     }
 
