@@ -202,22 +202,22 @@ impl Scanner {
                 }
             }
             CURLY_BRACKET_RIGHT => {
-                if matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
-                    if let Some(character) = char::from_u32(mem::take(&mut self.utf_codepoint)) {
-                        if character.is_control() && !character.is_whitespace() {
-                            Err(()) // control characters are not allowed unless they are whitespace
-                        } else {
-                            self.stack.pop();
-                            self.buf.push(character);
-                            Ok(State::EscapedStringLiteral)
-                        }
-                    } else {
-                        Err(()) // invalid escape sequence
-                    }
-                } else {
-                    // unbalanced closing curly bracket
-                    Err(())
+                if !matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
+                    return Err(()); // unbalanced closing curly bracket
                 }
+
+                let codepoint = mem::take(&mut self.utf_codepoint);
+                let Some(character) = char::from_u32(codepoint) else {
+                    return Err(()); // invalid codepoint
+                };
+
+                if character.is_control() && !character.is_whitespace() {
+                    return Err(()); // unexpected control character;
+                }
+
+                self.stack.pop();
+                self.buf.push(character);
+                Ok(State::EscapedStringLiteral)
             }
             _ => {
                 if let Some(value) = c.to_digit(16) {
