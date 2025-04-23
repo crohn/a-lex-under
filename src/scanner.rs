@@ -5,6 +5,7 @@ const CARRIAGE_RETURN: char = '\r';
 const CURLY_BRACKET_LEFT: char = '{';
 const CURLY_BRACKET_RIGHT: char = '}';
 const DOUBLE_QUOTES: char = '"';
+const EQUALS_SIGN: char = '=';
 const HYPHEN: char = '-';
 const LOWERCASE_N: char = 'n';
 const LOWERCASE_R: char = 'r';
@@ -27,6 +28,7 @@ enum State {
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
+    LongOption(String),
     ShortOption(String),
     StringLiteral(String),
 }
@@ -69,7 +71,7 @@ impl Scanner {
                 State::Begin => self.handle_begin(c),
                 State::EscapedStringLiteral => self.handle_escaped_string_literal(c, &mut tokens),
                 State::Identifier => self.handle_identifier(c, &mut tokens),
-                State::LongOption => unimplemented!(), // TODO
+                State::LongOption => self.handle_long_option(c, &mut tokens),
                 State::Option => self.handle_option(c),
                 State::ShortOption => self.handle_short_option(c, &mut tokens),
                 State::UnicodeEscapeSequence => self.handle_unicode_escape_sequence(c),
@@ -89,7 +91,11 @@ impl Scanner {
                     return Err(());
                 }
             }
-            State::LongOption => unimplemented!(), // TODO
+            State::LongOption => {
+                if !self.buf.is_empty() {
+                    tokens.push(Token::LongOption(mem::take(&mut self.buf)));
+                }
+            }
             State::ShortOption => {
                 if self.buf.chars().count() == 1 {
                     tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
@@ -205,6 +211,60 @@ impl Scanner {
                 Ok(State::Begin)
             }
             _ => Err(()),
+        }
+    }
+
+    /// The scanner in is `LongOption` state after `'--'` is encountered.
+    ///
+    /// The token admits alphanumeric characters, hyphens and underscores, but
+    /// hyphens and underscores cannot be mixed.
+    ///
+    /// --foo bar      <- LongOption Identifier
+    /// --foo "bar"    <- LongOption StringLiteral
+    /// --foo="bar"    <- LongOption StringLiteral
+    /// --foo-bar      <- LongOption
+    /// --foo_bar      <- LongOption
+    /// --foo2bar      <- LongOption
+    /// --アキラ        <- LongOption
+    /// --foo--bar     <- Invalid, double hyphen
+    /// --foo__bar     <- Invalid, double underscore
+    /// --foo-_bar     <- Invalid, succession hyphen underscore
+    /// --foo_-bar     <- Invalid, succession underscore hyphen
+    /// ---foo         <- Invalid, starts with hyphen
+    /// --_foo         <- Invalid, starts with underscore
+    /// --foo$bar      <- Invalid, non-alphanumeric
+    fn handle_long_option(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+        if self.buf.is_empty() && !c.is_alphanumeric() {
+            return Err(()); // must start with alphanumeric
+        }
+
+        let last_option_char = self.buf.chars().last();
+        match (last_option_char, c) {
+            (Some(HYPHEN), HYPHEN) => Err(()),         // invalid --
+            (Some(HYPHEN), UNDERSCORE) => Err(()),     // invalid -_
+            (Some(UNDERSCORE), HYPHEN) => Err(()),     // invalid _-
+            (Some(UNDERSCORE), UNDERSCORE) => Err(()), // invalid __
+            (Some(_), HYPHEN) => {
+                self.buf.push(c);
+                Ok(State::LongOption)
+            }
+            (Some(_), UNDERSCORE) => {
+                self.buf.push(c);
+                Ok(State::LongOption)
+            }
+            (Some(_), EQUALS_SIGN) => {
+                tokens.push(Token::LongOption(mem::take(&mut self.buf)));
+                Ok(State::Begin)
+            }
+            _ if c.is_whitespace() => {
+                tokens.push(Token::LongOption(mem::take(&mut self.buf)));
+                Ok(State::Begin)
+            }
+            _ if c.is_alphanumeric() => {
+                self.buf.push(c);
+                Ok(State::LongOption)
+            }
+            _ => Err(()), // invalid character
         }
     }
 
@@ -378,6 +438,91 @@ mod test {
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("123");
+        assert_eq!(tokens, Err(()));
+    }
+
+    #[test]
+    fn token_long_option() {
+        let tokens = Scanner::new().scan("--123");
+        assert_eq!(tokens, Ok(vec![Token::LongOption("123".to_string()),]));
+
+        let tokens = Scanner::new().scan("--foo");
+        assert_eq!(tokens, Ok(vec![Token::LongOption("foo".to_string()),]));
+
+        let tokens = Scanner::new().scan("--foo bar");
+        assert_eq!(
+            tokens,
+            Ok(vec![
+                Token::LongOption("foo".to_string()),
+                Token::Identifier("bar".to_string())
+            ])
+        );
+
+        let tokens = Scanner::new().scan("--foo \"bar\"");
+        assert_eq!(
+            tokens,
+            Ok(vec![
+                Token::LongOption("foo".to_string()),
+                Token::StringLiteral("bar".to_string())
+            ])
+        );
+
+        let tokens = Scanner::new().scan("--foo=bar");
+        assert_eq!(
+            tokens,
+            Ok(vec![
+                Token::LongOption("foo".to_string()),
+                Token::Identifier("bar".to_string())
+            ])
+        );
+
+        let tokens = Scanner::new().scan("--foo=\"bar\"");
+        assert_eq!(
+            tokens,
+            Ok(vec![
+                Token::LongOption("foo".to_string()),
+                Token::StringLiteral("bar".to_string())
+            ])
+        );
+
+        let tokens = Scanner::new().scan("--foo-bar");
+        assert_eq!(tokens, Ok(vec![Token::LongOption("foo-bar".to_string()),]));
+
+        let tokens = Scanner::new().scan("--foo_bar");
+        assert_eq!(tokens, Ok(vec![Token::LongOption("foo_bar".to_string()),]));
+
+        let tokens = Scanner::new().scan("--foo2bar");
+        assert_eq!(tokens, Ok(vec![Token::LongOption("foo2bar".to_string()),]));
+
+        let tokens = Scanner::new().scan("--アキラ");
+        assert_eq!(tokens, Ok(vec![Token::LongOption("アキラ".to_string()),]));
+
+        let tokens = Scanner::new().scan("--foo--bar");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--foo-_bar");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--foo_-bar");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--foo__bar");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("---foo");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--_foo");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--=foo");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--foo$bar");
+        assert_eq!(tokens, Err(()));
+
+        // this fails because identifier cannot start with =
+        let tokens = Scanner::new().scan("--foo==bar");
         assert_eq!(tokens, Err(()));
     }
 
