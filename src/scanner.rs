@@ -240,10 +240,12 @@ impl Scanner {
 
         let last_option_char = self.buf.chars().last();
         match (last_option_char, c) {
-            (Some(HYPHEN), HYPHEN) => Err(()),         // invalid --
-            (Some(HYPHEN), UNDERSCORE) => Err(()),     // invalid -_
-            (Some(UNDERSCORE), HYPHEN) => Err(()),     // invalid _-
-            (Some(UNDERSCORE), UNDERSCORE) => Err(()), // invalid __
+            (Some(HYPHEN), HYPHEN) => Err(()),          // invalid --
+            (Some(HYPHEN), UNDERSCORE) => Err(()),      // invalid -_
+            (Some(UNDERSCORE), HYPHEN) => Err(()),      // invalid _-
+            (Some(UNDERSCORE), UNDERSCORE) => Err(()),  // invalid __
+            (Some(HYPHEN), EQUALS_SIGN) => Err(()),     // invalid -=
+            (Some(UNDERSCORE), EQUALS_SIGN) => Err(()), // invalid _=
             (Some(_), HYPHEN) => {
                 self.buf.push(c);
                 Ok(State::LongOption)
@@ -289,7 +291,7 @@ impl Scanner {
     fn handle_short_option(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
         if !c.is_whitespace() {
             return Err(()); // illegal character, this means that we had a '-ab' input
-            // this prevents that empty option is pushed into tokens, '- '
+                            // this prevents that empty option is pushed into tokens, '- '
         }
         tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
         Ok(State::Begin)
@@ -516,6 +518,9 @@ mod test {
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("--=foo");
+        assert_eq!(tokens, Err(()));
+
+        let tokens = Scanner::new().scan("--f-=foo");
         assert_eq!(tokens, Err(()));
 
         let tokens = Scanner::new().scan("--foo$bar");
