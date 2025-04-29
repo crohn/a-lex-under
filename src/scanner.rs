@@ -3,7 +3,7 @@ pub mod error;
 use std::error::Error;
 use std::mem;
 
-use error::ParseError;
+use error::{ParseError, ScanError, ScanErrorKind};
 
 const BACKSLASH: char = '\\';
 const CARRIAGE_RETURN: char = '\r';
@@ -172,13 +172,12 @@ impl Scanner {
                 Ok(State::Identifier)
             }
             _ if c.is_whitespace() => Ok(State::Begin),
-            _ => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}",
-                    c, self.row, self.col
-                ),
-            })),
+            c => Err(self.scan_error(ScanErrorKind::InvalidStartOfToken(c))),
         }
+    }
+
+    fn scan_error(&self, kind: ScanErrorKind) -> Box<ScanError> {
+        Box::new(ScanError::new(kind, self.row, self.col))
     }
 
     /// The scanner is in `EscapedStringLiteral` state while processing a
