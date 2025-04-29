@@ -1,4 +1,8 @@
+pub mod error;
+
 use std::mem;
+
+use error::ParseError;
 
 const BACKSLASH: char = '\\';
 const CARRIAGE_RETURN: char = '\r';
@@ -35,7 +39,9 @@ pub enum Token {
 
 pub struct Scanner {
     buf: String,
+    col: usize,
     escape: bool,
+    row: usize,
     stack: Vec<char>,
     state: State,
     utf_codepoint: u32,
@@ -45,7 +51,9 @@ impl Default for Scanner {
     fn default() -> Self {
         Self {
             buf: String::new(),
+            col: 1,
             escape: false,
+            row: 1,
             stack: Vec::new(),
             state: State::Begin,
             utf_codepoint: 0,
@@ -62,11 +70,18 @@ impl Scanner {
     ///
     /// The scanner uses a string buffer during the scan to accumulate
     /// characters and a state machine to produce tokens.
-    pub fn scan(&mut self, input: &str) -> Result<Vec<Token>, ()> {
+    pub fn scan(&mut self, input: &str) -> Result<Vec<Token>, ParseError> {
         let mut tokens = Vec::new();
 
         // main-loop check
-        for c in input.chars() {
+        for (i, c) in input.chars().enumerate() {
+            self.col = i + 1;
+
+            if c == NEWLINE {
+                self.row += 1;
+                self.col = 1;
+            }
+
             self.state = match self.state {
                 State::Begin => self.handle_begin(c),
                 State::EscapedStringLiteral => self.handle_escaped_string_literal(c, &mut tokens),
@@ -88,7 +103,12 @@ impl Scanner {
                 // inconsistent, because that's the starting state, after every
                 // token production.
                 if !self.buf.is_empty() {
-                    return Err(());
+                    return Err(ParseError {
+                        message: format!(
+                            "error: unexpected end of input, buffer content: {}",
+                            self.buf
+                        ),
+                    });
                 }
             }
             State::LongOption => {
@@ -100,10 +120,16 @@ impl Scanner {
                 if self.buf.chars().count() == 1 {
                     tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
                 } else {
-                    return Err(());
+                    return Err(ParseError {
+                        message: "error: short option can include only one character.".to_string(),
+                    });
                 }
             }
-            State::Option => return Err(()), // unexpected end of input, input ends with '-'
+            State::Option => {
+                return Err(ParseError {
+                    message: "error: unexpected end of input, input ends with '-'.".to_string(),
+                });
+            }
             State::EscapedStringLiteral => {} // main error is unbalance "
             State::Identifier => {
                 if !self.buf.is_empty() {
@@ -116,24 +142,24 @@ impl Scanner {
         // There is an unbalanced token somewhere. Stack needs to keep track of
         // col and row.
         if !self.stack.is_empty() {
-            return Err(());
+            return Err(ParseError {
+                message: format!("error: unbalanced '{}'.", self.stack.last().unwrap()),
+            });
         }
 
         Ok(tokens)
     }
 
-    /// The scanner is in `Begin` state at start or every time a token is
-    /// produced.
+    /// The scanner is in `Begin` state at start or after a token is produced.
     ///
-    /// Any lexeme starting with an UTF-8 alphabetic character produces an
-    /// `Identifier` token.
-    ///
-    /// Any lexeme starting with quotation mark (`"`) produces a `StringLiteral`
-    /// token.
-    ///
-    /// Any lexeme starting with a single hyphen (`-`) produces a `ShortOption`.
-    /// Any lexeme starting with a double hyphen (`--`) produces a `LongOption`.
-    fn handle_begin(&mut self, c: char) -> Result<State, ()> {
+    /// Valid characters and state machine transitions:
+    /// ```txt
+    /// UTF-8 alphabetic character -> Identifier
+    ///         quotation mark (") -> StringLiteral
+    ///                 hyphen (-) -> Option
+    ///    whitespace (\n|\t|\r| ) -> Begin
+    /// ```
+    fn handle_begin(&mut self, c: char) -> Result<State, ParseError> {
         match c {
             DOUBLE_QUOTES => {
                 self.stack.push(c);
@@ -145,7 +171,12 @@ impl Scanner {
                 Ok(State::Identifier)
             }
             _ if c.is_whitespace() => Ok(State::Begin),
-            _ => Err(()),
+            _ => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}",
+                    c, self.row, self.col
+                ),
+            }),
         }
     }
 
@@ -161,27 +192,39 @@ impl Scanner {
         &mut self,
         c: char,
         tokens: &mut Vec<Token>,
-    ) -> Result<State, ()> {
+    ) -> Result<State, ParseError> {
         match c {
-            BACKSLASH => self.in_literal_backslash(c),
+            BACKSLASH => Ok(self.in_literal_backslash(c)),
             DOUBLE_QUOTES => self.in_literal_quotes(c, tokens),
-            LOWERCASE_N => self.in_literal_whitespace(c, NEWLINE),
-            LOWERCASE_R => self.in_literal_whitespace(c, CARRIAGE_RETURN),
-            LOWERCASE_T => self.in_literal_whitespace(c, TAB),
-            LOWERCASE_U => self.in_literal_unicode(c),
+            LOWERCASE_N => Ok(self.in_literal_whitespace(c, NEWLINE)),
+            LOWERCASE_R => Ok(self.in_literal_whitespace(c, CARRIAGE_RETURN)),
+            LOWERCASE_T => Ok(self.in_literal_whitespace(c, TAB)),
+            LOWERCASE_U => Ok(self.in_literal_unicode(c)),
             _ if c.is_whitespace() => {
                 self.buf.push(c);
                 Ok(State::EscapedStringLiteral)
             }
             _ if !c.is_control() => {
                 if self.escape {
-                    Err(()) // invalid escape sequence
+                    Err(ParseError {
+                        message: format!(
+                            "error: unexpected character '{}' at line {} col {}. Invalid escape sequence.",
+                            c, self.row, self.col
+                        ),
+                    })
                 } else {
                     self.buf.push(c);
                     Ok(State::EscapedStringLiteral)
                 }
             }
-            _ if c.is_control() => Err(()),
+            _ if c.is_control() => Err(ParseError {
+                // TODO print control character code
+                // TODO implement test
+                message: format!(
+                    "error: unexpected control character at line {} col {}.",
+                    self.row, self.col
+                ),
+            }),
             _ => unreachable!(),
         }
     }
@@ -194,7 +237,7 @@ impl Scanner {
     ///
     /// When entering this state, the scanner has already processed the first
     /// char.
-    fn handle_identifier(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+    fn handle_identifier(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ParseError> {
         match c {
             UNDERSCORE => {
                 self.buf.push(c);
@@ -210,7 +253,12 @@ impl Scanner {
                 tokens.push(Token::Identifier(mem::take(&mut self.buf)));
                 Ok(State::Begin)
             }
-            _ => Err(()),
+            _ => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}.",
+                    c, self.row, self.col
+                ),
+            }),
         }
     }
 
@@ -233,19 +281,59 @@ impl Scanner {
     /// ---foo         <- Invalid, starts with hyphen
     /// --_foo         <- Invalid, starts with underscore
     /// --foo$bar      <- Invalid, non-alphanumeric
-    fn handle_long_option(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+    fn handle_long_option(
+        &mut self,
+        c: char,
+        tokens: &mut Vec<Token>,
+    ) -> Result<State, ParseError> {
         if self.buf.is_empty() && !c.is_alphanumeric() {
-            return Err(()); // must start with alphanumeric
+            return Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Long option must start with alphanumeric UTF-8 character.",
+                    c, self.row, self.col
+                ),
+            });
         }
 
         let last_option_char = self.buf.chars().last();
         match (last_option_char, c) {
-            (Some(HYPHEN), HYPHEN) => Err(()),          // invalid --
-            (Some(HYPHEN), UNDERSCORE) => Err(()),      // invalid -_
-            (Some(UNDERSCORE), HYPHEN) => Err(()),      // invalid _-
-            (Some(UNDERSCORE), UNDERSCORE) => Err(()),  // invalid __
-            (Some(HYPHEN), EQUALS_SIGN) => Err(()),     // invalid -=
-            (Some(UNDERSCORE), EQUALS_SIGN) => Err(()), // invalid _=
+            (Some(HYPHEN), HYPHEN) => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Invalid '--' sequence within long option.",
+                    c, self.row, self.col
+                ),
+            }),
+            (Some(HYPHEN), UNDERSCORE) => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Invalid '-_' sequence within long option.",
+                    c, self.row, self.col
+                ),
+            }),
+            (Some(UNDERSCORE), HYPHEN) => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Invalid '_-' sequence within long option.",
+                    c, self.row, self.col
+                ),
+            }),
+            (Some(UNDERSCORE), UNDERSCORE) => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Invalid '__' sequence within long option.",
+                    c, self.row, self.col
+                ),
+            }),
+            (Some(HYPHEN), EQUALS_SIGN) => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Invalid '-=' sequence within long option.",
+                    c, self.row, self.col
+                ),
+            }),
+            (Some(UNDERSCORE), EQUALS_SIGN) => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Invalid '_=' sequence within long option.",
+                    c, self.row, self.col
+                ),
+            }),
+            // TODO handle other invalid sequences like ==
             (Some(_), HYPHEN) => {
                 self.buf.push(c);
                 Ok(State::LongOption)
@@ -266,7 +354,12 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::LongOption)
             }
-            _ => Err(()), // invalid character
+            _ => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}.",
+                    c, self.row, self.col
+                ),
+            }),
         }
     }
 
@@ -274,24 +367,39 @@ impl Scanner {
     ///
     /// From this state, it can transition to long or short option, according to
     /// the value of `c`.
-    fn handle_option(&mut self, c: char) -> Result<State, ()> {
+    fn handle_option(&mut self, c: char) -> Result<State, ParseError> {
         match c {
             HYPHEN => Ok(State::LongOption),
             _ if c.is_alphanumeric() => {
                 self.buf.push(c);
                 Ok(State::ShortOption)
             }
-            _ => Err(()), // invalid character
+            _ => Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Short option can include alphanumeric characters only.",
+                    c, self.row, self.col
+                ),
+            }),
         }
     }
 
     /// The scanner is in `ShortOption` state after a `-<CHAR>` input is
     /// encountered, thus we expect a non-empty buffer. Also <CHAR> is an
     /// alphanumeric UTF-8 char.
-    fn handle_short_option(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+    fn handle_short_option(
+        &mut self,
+        c: char,
+        tokens: &mut Vec<Token>,
+    ) -> Result<State, ParseError> {
         if !c.is_whitespace() {
-            return Err(()); // illegal character, this means that we had a '-ab' input
-                            // this prevents that empty option is pushed into tokens, '- '
+            // illegal character, this means that we had a '-ab' input
+            // this prevents that empty option is pushed into tokens, '- '
+            return Err(ParseError {
+                message: format!(
+                    "error: invalid character '{}' at line {} col {}. Short option can include only one character.",
+                    c, self.row, self.col
+                ),
+            });
         }
         tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
         Ok(State::Begin)
@@ -301,11 +409,16 @@ impl Scanner {
     /// sequence is encountered.
     ///
     /// The escape sequence continues with `{<HEX_DIGITS>}`.
-    fn handle_unicode_escape_sequence(&mut self, c: char) -> Result<State, ()> {
+    fn handle_unicode_escape_sequence(&mut self, c: char) -> Result<State, ParseError> {
         match c {
             CURLY_BRACKET_LEFT => {
                 if matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
-                    Err(()) // cannot push { over {
+                    Err(ParseError {
+                        message: format!(
+                            "error: invalid character '{}' at line {} col {}. Cannot nest curly brackets.",
+                            c, self.row, self.col
+                        ),
+                    })
                 } else {
                     self.stack.push(c);
                     Ok(State::UnicodeEscapeSequence)
@@ -313,16 +426,28 @@ impl Scanner {
             }
             CURLY_BRACKET_RIGHT => {
                 if !matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
-                    return Err(()); // unbalanced closing curly bracket
+                    return Err(ParseError {
+                        message: format!(
+                            "error: invalid character '{}' at line {} col {}. Unbalanced closing curly bracket.",
+                            c, self.row, self.col
+                        ),
+                    });
                 }
 
                 let codepoint = mem::take(&mut self.utf_codepoint);
                 let Some(character) = char::from_u32(codepoint) else {
-                    return Err(()); // invalid codepoint
+                    return Err(ParseError {
+                        message: "error: invalid UTF-8 codepoint.".to_string(),
+                    });
                 };
 
                 if character.is_control() && !character.is_whitespace() {
-                    return Err(()); // unexpected control character;
+                    return Err(ParseError {
+                        message: format!(
+                            "error: invalid character at line {} col {}. Unexpected control character.",
+                            self.row, self.col
+                        ),
+                    });
                 }
 
                 self.stack.pop();
@@ -334,26 +459,33 @@ impl Scanner {
                     self.utf_codepoint = self.utf_codepoint * 16 + value;
                     Ok(State::UnicodeEscapeSequence)
                 } else {
-                    Err(()) // invalid hex digit
+                    Err(ParseError {
+                        message: format!(
+                            "error: invalid character '{}' at line {} col {}. Invalid hex digit.",
+                            c, self.row, self.col
+                        ),
+                    })
                 }
             }
         }
     }
 
-    fn in_literal_backslash(&mut self, c: char) -> Result<State, ()> {
+    fn in_literal_backslash(&mut self, c: char) -> State {
         if self.escape {
             self.escape = false;
             self.buf.push(c);
         } else {
             self.escape = true;
         }
-        Ok(State::EscapedStringLiteral)
+        State::EscapedStringLiteral
     }
 
-    fn in_literal_quotes(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ()> {
+    /// `c` is double quotes
+    fn in_literal_quotes(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ParseError> {
         if self.escape {
             self.escape = false;
             self.buf.push(c);
+
             Ok(State::EscapedStringLiteral)
         } else if matches!(self.stack.last(), Some(&DOUBLE_QUOTES)) {
             self.stack.pop();
@@ -363,32 +495,38 @@ impl Scanner {
                 mem::take(&mut self.buf)
             };
             tokens.push(Token::StringLiteral(content));
+
             Ok(State::Begin)
         } else {
-            Err(())
+            Err(ParseError {
+                message: format!(
+                    "error: unexpected character '{}' at line {} col {}. Missing opening quotes.",
+                    c, self.row, self.col
+                ),
+            })
         }
     }
 
     /// The scanner receiving a `u` character checks whether it's a `\u` escape
     /// sequence or just the `u` ASCII character.
-    fn in_literal_unicode(&mut self, c: char) -> Result<State, ()> {
+    fn in_literal_unicode(&mut self, c: char) -> State {
         if self.escape {
             self.escape = false;
-            Ok(State::UnicodeEscapeSequence)
+            State::UnicodeEscapeSequence
         } else {
             self.buf.push(c);
-            Ok(State::EscapedStringLiteral)
+            State::EscapedStringLiteral
         }
     }
 
-    fn in_literal_whitespace(&mut self, c: char, escaped: char) -> Result<State, ()> {
+    fn in_literal_whitespace(&mut self, c: char, escaped: char) -> State {
         if self.escape {
             self.escape = false;
             self.buf.push(escaped);
         } else {
             self.buf.push(c);
         }
-        Ok(State::EscapedStringLiteral)
+        State::EscapedStringLiteral
     }
 }
 
@@ -398,235 +536,473 @@ mod test {
 
     #[test]
     fn empty() {
-        let tokens = Scanner::new().scan("");
-        assert_eq!(tokens, Ok(vec![]));
+        let tokens = Scanner::new().scan("").expect("Should parse empty string.");
+        assert_eq!(
+            tokens,
+            vec![],
+            "Expected empty Token vector for empty string."
+        );
 
-        let tokens = Scanner::new().scan(" \n \r \t ");
-        assert_eq!(tokens, Ok(vec![]));
+        let tokens = Scanner::new()
+            .scan(" \n \r \t ")
+            .expect("Should parse string containing whitespaces only.");
+        assert_eq!(
+            tokens,
+            vec![],
+            "Expected empty Token vector for string containing whitespaces only."
+        );
     }
 
     #[test]
     fn token_identifier() {
-        let tokens = Scanner::new().scan("foo foo_bar foo_123_bar アキラ");
+        let tokens = Scanner::new()
+            .scan("foo foo_bar foo_123_bar アキラ")
+            .expect("Should parse alphanumeric UTF-8 identifiers connected by underscores.");
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::Identifier("foo".to_string()),
                 Token::Identifier("foo_bar".to_string()),
                 Token::Identifier("foo_123_bar".to_string()),
                 Token::Identifier("アキラ".to_string()),
-            ])
+            ]
         );
 
-        let tokens = Scanner::new().scan("foo\tアキラ");
+        let tokens = Scanner::new()
+            .scan("foo\tアキラ")
+            .expect("Should parse identifiers separated by whitespace characters.");
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::Identifier("foo".to_string()),
                 Token::Identifier("アキラ".to_string()),
-            ])
+            ]
         );
 
-        let tokens = Scanner::new().scan(" valid");
-        assert_eq!(tokens, Ok(vec![Token::Identifier("valid".to_string())]));
+        let tokens = Scanner::new()
+            .scan(" valid")
+            .expect("Should parse a string starting with whitespace characters.");
+        assert_eq!(tokens, vec![Token::Identifier("valid".to_string())]);
 
-        let tokens = Scanner::new().scan("_invalid");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("_invalid")
+            .expect_err("Should reject identifiers starting with underscore.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '_' at line 1 col 1".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("1nvalid");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("1nvalid")
+            .expect_err("Should reject identifiers starting with numeric characters.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '1' at line 1 col 1".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("inv@lid");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("inv@lid")
+            .expect_err("Should reject identifiers that contain non-alphanumeric characters.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '@' at line 1 col 4.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("123");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("123")
+            .expect_err("Should reject identifiers that contain only numeric characters.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '1' at line 1 col 1".to_string()
+            }
+        );
     }
 
     #[test]
     fn token_long_option() {
-        let tokens = Scanner::new().scan("--123");
-        assert_eq!(tokens, Ok(vec![Token::LongOption("123".to_string()),]));
+        let tokens = Scanner::new()
+            .scan("--123")
+            .expect("Should parse long options containing only numeric characters.");
+        assert_eq!(tokens, vec![Token::LongOption("123".to_string()),]);
 
-        let tokens = Scanner::new().scan("--foo");
-        assert_eq!(tokens, Ok(vec![Token::LongOption("foo".to_string()),]));
+        let tokens = Scanner::new()
+            .scan("--foo")
+            .expect("Should parse long options containing alphabetic characters.");
+        assert_eq!(tokens, vec![Token::LongOption("foo".to_string()),]);
 
-        let tokens = Scanner::new().scan("--foo bar");
+        let tokens = Scanner::new()
+            .scan("--foo bar")
+            .expect("Should parse long option with argument as identifier.");
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::LongOption("foo".to_string()),
                 Token::Identifier("bar".to_string())
-            ])
+            ]
         );
 
-        let tokens = Scanner::new().scan("--foo \"bar\"");
+        let tokens = Scanner::new()
+            .scan("--foo \"bar\"")
+            .expect("Should parse long option with argument as string literal.");
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::LongOption("foo".to_string()),
                 Token::StringLiteral("bar".to_string())
-            ])
+            ]
         );
 
-        let tokens = Scanner::new().scan("--foo=bar");
+        let tokens = Scanner::new()
+            .scan("--foo=bar")
+            .expect("Should parse long option using equals sign as separator with identifier.");
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::LongOption("foo".to_string()),
                 Token::Identifier("bar".to_string())
-            ])
+            ]
         );
 
-        let tokens = Scanner::new().scan("--foo=\"bar\"");
+        let tokens = Scanner::new()
+            .scan("--foo=\"bar\"")
+            .expect("Should parse long option using equals sign as separator with string literal.");
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::LongOption("foo".to_string()),
                 Token::StringLiteral("bar".to_string())
-            ])
+            ]
         );
 
-        let tokens = Scanner::new().scan("--foo-bar");
-        assert_eq!(tokens, Ok(vec![Token::LongOption("foo-bar".to_string()),]));
+        let tokens = Scanner::new()
+            .scan("--foo-bar")
+            .expect("Should parse hyphened long options.");
+        assert_eq!(tokens, vec![Token::LongOption("foo-bar".to_string()),]);
 
-        let tokens = Scanner::new().scan("--foo_bar");
-        assert_eq!(tokens, Ok(vec![Token::LongOption("foo_bar".to_string()),]));
+        let tokens = Scanner::new()
+            .scan("--foo_bar")
+            .expect("Should parse underscored long options.");
+        assert_eq!(tokens, vec![Token::LongOption("foo_bar".to_string()),]);
 
-        let tokens = Scanner::new().scan("--foo2bar");
-        assert_eq!(tokens, Ok(vec![Token::LongOption("foo2bar".to_string()),]));
+        let tokens = Scanner::new()
+            .scan("--foo2bar")
+            .expect("Should parse long options including numbers.");
+        assert_eq!(tokens, vec![Token::LongOption("foo2bar".to_string()),]);
 
-        let tokens = Scanner::new().scan("--アキラ");
-        assert_eq!(tokens, Ok(vec![Token::LongOption("アキラ".to_string()),]));
+        let tokens = Scanner::new()
+            .scan("--アキラ")
+            .expect("Should parse long options including UTF-8 characters.");
+        assert_eq!(tokens, vec![Token::LongOption("アキラ".to_string()),]);
 
-        let tokens = Scanner::new().scan("--foo--bar");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--foo--bar")
+            .expect_err("Should reject long options that include double hyphens.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '-' at line 1 col 7. Invalid '--' sequence within long option.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--foo-_bar");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--foo-_bar")
+            .expect_err("Should reject long options that include '-_'.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '_' at line 1 col 7. Invalid '-_' sequence within long option.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--foo_-bar");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--foo_-bar")
+            .expect_err("Should reject long options that include '_-'.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '-' at line 1 col 7. Invalid '_-' sequence within long option.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--foo__bar");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--foo__bar")
+            .expect_err("Should reject long options that include '__'.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '_' at line 1 col 7. Invalid '__' sequence within long option.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("---foo");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("---foo")
+            .expect_err("Should reject long options that start with '-'.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '-' at line 1 col 3. Long option must start with alphanumeric UTF-8 character.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--_foo");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--_foo")
+            .expect_err("Should reject long options that start with '_'.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '_' at line 1 col 3. Long option must start with alphanumeric UTF-8 character.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--=foo");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--=foo")
+            .expect_err("Should reject long options that start with '='.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '=' at line 1 col 3. Long option must start with alphanumeric UTF-8 character.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--f-=foo");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--f-=foo")
+            .expect_err("Should reject long options that include '-='.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '=' at line 1 col 5. Invalid '-=' sequence within long option.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("--foo$bar");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--foo$bar")
+            .expect_err("Should reject long options that include non-alphanumeric characters.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '$' at line 1 col 6.".to_string()
+            }
+        );
 
         // this fails because identifier cannot start with =
-        let tokens = Scanner::new().scan("--foo==bar");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("--foo==bar")
+            .expect_err("Should reject long options that include '=='.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '=' at line 1 col 7".to_string()
+            }
+        );
     }
 
     #[test]
     fn token_short_option() {
-        let tokens = Scanner::new().scan("-a -ア");
+        let tokens = Scanner::new().scan("-a -ア -1").expect(
+            "Should parse short options that include a single UTF-8 alphanumeric character.",
+        );
         assert_eq!(
             tokens,
-            Ok(vec![
+            vec![
                 Token::ShortOption("a".to_string()),
-                Token::ShortOption("ア".to_string())
-            ])
+                Token::ShortOption("ア".to_string()),
+                Token::ShortOption("1".to_string())
+            ]
         );
 
-        let tokens = Scanner::new().scan("-");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("-")
+            .expect_err("Should reject empty short options.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: unexpected end of input, input ends with '-'.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("-?");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("-?")
+            .expect_err("Should reject non-alphanumeric short options.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character '?' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("- ");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("- ")
+            .expect_err("Should reject whitespace short options.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character ' ' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("-ab");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("-ab")
+            .expect_err("Should reject short options including more than 1 character.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: invalid character 'b' at line 1 col 3. Short option can include only one character.".to_string()
+            }
+        );
     }
 
     #[test]
     fn token_string_literal() {
-        let tokens = Scanner::new().scan("\"\"");
-        assert_eq!(tokens, Ok(vec![Token::StringLiteral("".to_string())]));
+        let tokens = Scanner::new().scan("\"\"").expect("String literal: empty.");
+        assert_eq!(tokens, vec![Token::StringLiteral("".to_string())]);
 
-        let tokens = Scanner::new().scan("\"\\\"\"");
-        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\"".to_string())]));
+        let tokens = Scanner::new()
+            .scan("\"\\\"\"")
+            .expect("String literal: single quote.");
+        assert_eq!(tokens, vec![Token::StringLiteral("\"".to_string())]);
 
-        let tokens = Scanner::new().scan("\"\\\\\"");
-        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\\".to_string())]));
+        let tokens = Scanner::new()
+            .scan("\"\\\\\"")
+            .expect("String literal: backslash.");
+        assert_eq!(tokens, vec![Token::StringLiteral("\\".to_string())]);
 
-        let tokens = Scanner::new().scan("\"\t\n\r\"");
-        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
+        let tokens = Scanner::new()
+            .scan("\"\t\n\r\"")
+            .expect("String literal: whitespaces.");
+        assert_eq!(tokens, vec![Token::StringLiteral("\t\n\r".to_string())]);
 
-        let tokens = Scanner::new().scan("\"\\u{9}\\u{a}\\u{d}\\u{20}\"");
+        let tokens = Scanner::new()
+            .scan("\"\\u{9}\\u{a}\\u{d}\\u{20}\"")
+            .expect("String literal: whitespace escape sequences UTF-8.");
+        assert_eq!(tokens, vec![Token::StringLiteral("\t\n\r ".to_string())]);
+
+        let tokens = Scanner::new()
+            .scan("\"\\t\\n\\r\"")
+            .expect("String literal: whitespace escape sequences.");
+        assert_eq!(tokens, vec![Token::StringLiteral("\t\n\r".to_string())]);
+
+        let tokens = Scanner::new().scan("\"v@lid\ts3quence アキラ\"").expect(
+            "String literal: supports alphanumeric UTF-8 characters, whitespaces and symbols.",
+        );
         assert_eq!(
             tokens,
-            Ok(vec![Token::StringLiteral("\t\n\r ".to_string())])
+            vec![Token::StringLiteral("v@lid\ts3quence アキラ".to_string())]
         );
 
-        let tokens = Scanner::new().scan("\"\\t\\n\\r\"");
-        assert_eq!(tokens, Ok(vec![Token::StringLiteral("\t\n\r".to_string())]));
+        let tokens = Scanner::new()
+            .scan("\"\\u{30a2}\\u{30ad}\\u{30e9}\"")
+            .expect("String literal: UTF-8 escape sequences.");
+        assert_eq!(tokens, vec![Token::StringLiteral("アキラ".to_string())]);
 
-        let tokens = Scanner::new().scan("\"v@lid\ts3quence アキラ\"");
+        let tokens = Scanner::new()
+            .scan("\"\\u{30a2}\\u{30ad}\\u{30e9}\"")
+            .expect("String literal: UTF-8 escape sequences vs Rust");
         assert_eq!(
             tokens,
-            Ok(vec![Token::StringLiteral(
-                "v@lid\ts3quence アキラ".to_string()
-            )])
+            vec![Token::StringLiteral("\u{30a2}\u{30ad}\u{30e9}".to_string())]
         );
 
-        let tokens = Scanner::new().scan("\"\\u{30a2}\\u{30ad}\\u{30e9}\"");
-        assert_eq!(tokens, Ok(vec![Token::StringLiteral("アキラ".to_string())]));
-
-        let tokens = Scanner::new().scan("\"\\u{30a2}\\u{30ad}\\u{30e9}\"");
+        let tokens = Scanner::new()
+            .scan("\"\\u{d801}\"")
+            .expect_err("String literal: invalid codepoint.");
         assert_eq!(
             tokens,
-            Ok(vec![Token::StringLiteral(
-                "\u{30a2}\u{30ad}\u{30e9}".to_string()
-            )])
+            ParseError {
+                message: "error: invalid UTF-8 codepoint.".to_string()
+            }
         );
 
-        // invalid codepoint
-        let tokens = Scanner::new().scan("\"\\u{d801}\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"hello world\\{0}\"")
+            .expect_err("String literal: invalid character.");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message:
+                    "error: unexpected character '{' at line 1 col 14. Invalid escape sequence."
+                        .to_string()
+            }
+        );
 
-        // invalid character
-        let tokens = Scanner::new().scan("\"hello world\\{0}\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"\\u\"")
+            .expect_err("Invalid UTF-8 escape sequence");
+        assert_eq!(
+            tokens,
+            ParseError {
+                // FIXME -- invalid hex digit is out of scope
+                message: "error: invalid character '\"' at line 1 col 4. Invalid hex digit."
+                    .to_string()
+            }
+        );
 
-        // invalid escape sequence
-        let tokens = Scanner::new().scan("\"\\u\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"\\z\"")
+            .expect_err("Invalid escape sequence");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message:
+                    "error: unexpected character 'z' at line 1 col 3. Invalid escape sequence."
+                        .to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("\"\\z\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"\\ア\"")
+            .expect_err("Invalid escape UTF-8 sequence");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message:
+                    "error: unexpected character 'ア' at line 1 col 3. Invalid escape sequence."
+                        .to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("\"\\ア\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new().scan("\"").expect_err("Unbalanced quotes");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: unbalanced '\"'.".to_string()
+            }
+        );
 
-        // unbalanced quotes
-        let tokens = Scanner::new().scan("\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"\\\"")
+            .expect_err("Unbalanced quotes (2)");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: unbalanced '\"'.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("\"\\\"");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"foo")
+            .expect_err("Unbalanced quotes (3)");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: unbalanced '\"'.".to_string()
+            }
+        );
 
-        let tokens = Scanner::new().scan("\"foo");
-        assert_eq!(tokens, Err(()));
-
-        // unbalanced curly bracer
-        let tokens = Scanner::new().scan("\"\\u{7f");
-        assert_eq!(tokens, Err(()));
+        let tokens = Scanner::new()
+            .scan("\"\\u{7f")
+            .expect_err("Unbalanced curly bracket");
+        assert_eq!(
+            tokens,
+            ParseError {
+                message: "error: unbalanced '{'.".to_string()
+            }
+        );
     }
 }
