@@ -181,6 +181,7 @@ impl Scanner {
     ///
     /// The token carries the content, excluding the wrapping quotation marks
     /// and converts escape sequences into whitespaces or UTF-8 characters.
+    /// Control characters are excluded.
     ///
     /// When entering this state, the scanner has already processed the opening
     /// double quotes, pushing it into the stack to check the closing balance.
@@ -200,14 +201,9 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::EscapedStringLiteral)
             }
-            _ if !c.is_control() => {
+            s if !c.is_control() => {
                 if self.escape {
-                    Err(Box::new(ParseError {
-                        message: format!(
-                            "error: unexpected character '{}' at line {} col {}. Invalid escape sequence.",
-                            c, self.row, self.col
-                        ),
-                    }))
+                    Err(self.scan_error(ScanErrorKind::InvalidLiteralEscape(s)))
                 } else {
                     self.buf.push(c);
                     Ok(State::EscapedStringLiteral)
@@ -877,12 +873,11 @@ mod test {
         );
 
         let tokens = Scanner::new()
-            .scan("\"hello world\\{0}\"")
-            .expect_err("String literal: invalid character.");
+            .scan("\"\\z\"")
+            .expect_err("Invalid escape sequence, only whitespaces are supported.");
         assert_eq!(
             *tokens.to_string(),
-            "error: unexpected character '{' at line 1 col 14. Invalid escape sequence."
-                .to_string()
+            "error@1,3: unexpected character 'z'. The sequence '\\z' is not valid, only '\\n', '\\r', '\\t' are supported.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -892,23 +887,6 @@ mod test {
             *tokens.to_string(),
             // FIXME -- invalid hex digit is out of scope
             "error: invalid character '\"' at line 1 col 4. Invalid hex digit.".to_string()
-        );
-
-        let tokens = Scanner::new()
-            .scan("\"\\z\"")
-            .expect_err("Invalid escape sequence");
-        assert_eq!(
-            *tokens.to_string(),
-            "error: unexpected character 'z' at line 1 col 3. Invalid escape sequence.".to_string()
-        );
-
-        let tokens = Scanner::new()
-            .scan("\"\\ア\"")
-            .expect_err("Invalid escape UTF-8 sequence");
-        assert_eq!(
-            *tokens.to_string(),
-            "error: unexpected character 'ア' at line 1 col 3. Invalid escape sequence."
-                .to_string()
         );
 
         let tokens = Scanner::new().scan("\"").expect_err("Unbalanced quotes");

@@ -17,6 +17,7 @@ impl Display for ParseError {
 #[derive(Debug)]
 pub enum ScanErrorKind {
     InvalidIdentifier(char),
+    InvalidLiteralEscape(char),
     InvalidTokenStart(char),
 }
 
@@ -42,6 +43,11 @@ impl Display for ScanError {
                 f,
                 "error@{},{}: unexpected character '{}'. Identifier can only contain alphanumeric or '_' characters.",
                 self.row, self.col, c
+            ),
+            ScanErrorKind::InvalidLiteralEscape(c) => write!(
+                f,
+                "error@{},{}: unexpected character '{}'. The sequence '\\{}' is not valid, only '\\n', '\\r', '\\t' are supported.",
+                self.row, self.col, c, c
             ),
             ScanErrorKind::InvalidTokenStart(c) => write!(
                 f,
