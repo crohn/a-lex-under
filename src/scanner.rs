@@ -192,7 +192,7 @@ impl Scanner {
     ) -> Result<State, Box<dyn Error>> {
         match c {
             BACKSLASH => Ok(self.in_literal_backslash(c)),
-            DOUBLE_QUOTES => self.in_literal_quotes(c, tokens),
+            DOUBLE_QUOTES => self.handle_quotes_in_literal(tokens),
             LOWERCASE_N => Ok(self.in_literal_whitespace(c, NEWLINE)),
             LOWERCASE_R => Ok(self.in_literal_whitespace(c, CARRIAGE_RETURN)),
             LOWERCASE_T => Ok(self.in_literal_whitespace(c, TAB)),
@@ -210,7 +210,7 @@ impl Scanner {
                 }
             }
             c if c.is_control() => {
-                Err(self.scan_error(ScanErrorKind::UnexpecetdContolCharacter(c)))
+                Err(self.scan_error(ScanErrorKind::UnexpectedContolCharacter(c)))
             }
             _ => unreachable!(),
         }
@@ -466,16 +466,20 @@ impl Scanner {
         State::EscapedStringLiteral
     }
 
-    /// `c` is double quotes
-    fn in_literal_quotes(
+    /// The scanner is in `EscapedStringLiteral` state and got a '"' character.
+    ///
+    /// - If the scanner is in escape state, the quotes are part of the content of
+    ///   the string literal.
+    /// - If the scanner has a '"' on top of the stack, the current character is
+    ///   the closing quotes, so produce a `StringLiteral` token.
+    /// - In any other case, the presence of '"' is unexpected.
+    fn handle_quotes_in_literal(
         &mut self,
-        c: char,
         tokens: &mut Vec<Token>,
     ) -> Result<State, Box<dyn Error>> {
         if self.escape {
             self.escape = false;
-            self.buf.push(c);
-
+            self.buf.push(DOUBLE_QUOTES);
             Ok(State::EscapedStringLiteral)
         } else if matches!(self.stack.last(), Some(&DOUBLE_QUOTES)) {
             self.stack.pop();
@@ -485,15 +489,17 @@ impl Scanner {
                 mem::take(&mut self.buf)
             };
             tokens.push(Token::StringLiteral(content));
-
             Ok(State::Begin)
         } else {
-            Err(Box::new(ParseError {
-                message: format!(
-                    "error: unexpected character '{}' at line {} col {}. Missing opening quotes.",
-                    c, self.row, self.col
-                ),
-            }))
+            // This function is invoked when the state is `EscapedStringLiteral`
+            // and current character is `"`. If the state is
+            // `EscapedStringLiteral` there must be a matching `"` on top of the
+            // stack, otherwise it means that the scanner is in an inconsistent
+            // state.
+            unreachable!(
+                "error@{},{}: inconsistent `EscapedStringLiteral` state. Unbalanced closing quotes.",
+                self.row, self.col
+            )
         }
     }
 

@@ -19,7 +19,8 @@ pub enum ScanErrorKind {
     InvalidIdentifier(char),
     InvalidLiteralEscape(char),
     InvalidTokenStart(char),
-    UnexpecetdContolCharacter(char),
+    UnbalancedDoubleQuotes,
+    UnexpectedContolCharacter(char),
 }
 
 #[derive(Debug)]
@@ -55,7 +56,14 @@ impl Display for ScanError {
                 "error@{},{}: unexpected character '{}'. Token starting character must be alphabetic, \" or -.",
                 self.row, self.col, c
             ),
-            ScanErrorKind::UnexpecetdContolCharacter(c) => write!(
+            ScanErrorKind::UnbalancedDoubleQuotes => {
+                write!(
+                    f,
+                    "error@{},{}: unbalanced closing quote '\"'.",
+                    self.row, self.col
+                )
+            }
+            ScanErrorKind::UnexpectedContolCharacter(c) => write!(
                 f,
                 "error@{},{}: unexpected control character '{}'. Only '\\n', '\\r', '\\t' are supported.",
                 self.row,
