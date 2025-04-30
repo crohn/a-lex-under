@@ -16,7 +16,8 @@ impl Display for ParseError {
 
 #[derive(Debug)]
 pub enum ScanErrorKind {
-    InvalidStartOfToken(char),
+    InvalidIdentifier(char),
+    InvalidTokenStart(char),
 }
 
 #[derive(Debug)]
@@ -37,10 +38,15 @@ impl Error for ScanError {}
 impl Display for ScanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
-            ScanErrorKind::InvalidStartOfToken(c) => write!(
+            ScanErrorKind::InvalidIdentifier(c) => write!(
                 f,
-                "error: expected '\"' | '-' | UTF-8 alphabetic | whitespace, found '{}'\n --> ({}:{})",
-                c, self.row, self.col
+                "error@{},{}: unexpected character '{}'. Identifier can only contain alphanumeric or '_' characters.",
+                self.row, self.col, c
+            ),
+            ScanErrorKind::InvalidTokenStart(c) => write!(
+                f,
+                "error@{},{}: unexpected character '{}'. Token starting character must be alphabetic, \" or -.",
+                self.row, self.col, c
             ),
         }
     }

@@ -172,12 +172,8 @@ impl Scanner {
                 Ok(State::Identifier)
             }
             _ if c.is_whitespace() => Ok(State::Begin),
-            c => Err(self.scan_error(ScanErrorKind::InvalidStartOfToken(c))),
+            c => Err(self.scan_error(ScanErrorKind::InvalidTokenStart(c))),
         }
-    }
-
-    fn scan_error(&self, kind: ScanErrorKind) -> Box<ScanError> {
-        Box::new(ScanError::new(kind, self.row, self.col))
     }
 
     /// The scanner is in `EscapedStringLiteral` state while processing a
@@ -232,11 +228,11 @@ impl Scanner {
     /// The scanner is in `Identifier` state while processing an `Identifier`
     /// token.
     ///
-    /// `Identifier` tokens can contain UTF-8 alphanumeric characters or `'_'`
-    /// (underscore) characters.
+    /// `Identifier` tokens can contain UTF-8 alphanumeric characters or
+    /// underscor (`'_'`) characters.
     ///
     /// When entering this state, the scanner has already processed the first
-    /// char.
+    /// character, adding it to the string buffer.
     fn handle_identifier(
         &mut self,
         c: char,
@@ -257,12 +253,7 @@ impl Scanner {
                 tokens.push(Token::Identifier(mem::take(&mut self.buf)));
                 Ok(State::Begin)
             }
-            _ => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}.",
-                    c, self.row, self.col
-                ),
-            })),
+            c => Err(self.scan_error(ScanErrorKind::InvalidIdentifier(c))),
         }
     }
 
@@ -536,6 +527,10 @@ impl Scanner {
         }
         State::EscapedStringLiteral
     }
+
+    fn scan_error(&self, kind: ScanErrorKind) -> Box<ScanError> {
+        Box::new(ScanError::new(kind, self.row, self.col))
+    }
 }
 
 #[cfg(test)]
@@ -594,34 +589,26 @@ mod test {
 
         let tokens = Scanner::new()
             .scan("_invalid")
-            .expect_err("Should reject identifiers starting with underscore.");
+            .expect_err("Identifier cannot start with symbol '_'.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '_' at line 1 col 1".to_string()
+            "error@1,1: unexpected character '_'. Token starting character must be alphabetic, \" or -.".to_string()
         );
 
         let tokens = Scanner::new()
             .scan("1nvalid")
-            .expect_err("Should reject identifiers starting with numeric characters.");
+            .expect_err("Identifier cannot start with number.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '1' at line 1 col 1".to_string()
+            "error@1,1: unexpected character '1'. Token starting character must be alphabetic, \" or -.".to_string()
         );
 
         let tokens = Scanner::new()
             .scan("inv@lid")
-            .expect_err("Should reject identifiers that contain non-alphanumeric characters.");
+            .expect_err("Identifier cannot contain symbol '@'.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '@' at line 1 col 4.".to_string()
-        );
-
-        let tokens = Scanner::new()
-            .scan("123")
-            .expect_err("Should reject identifiers that contain only numeric characters.");
-        assert_eq!(
-            *tokens.to_string(),
-            "error: invalid character '1' at line 1 col 1".to_string()
+            "error@1,4: unexpected character '@'. Identifier can only contain alphanumeric or '_' characters.".to_string()
         );
     }
 
@@ -776,10 +763,10 @@ mod test {
         // this fails because identifier cannot start with =
         let tokens = Scanner::new()
             .scan("--foo==bar")
-            .expect_err("Should reject long options that include '=='.");
+            .expect_err("Identifier cannot start with symbol '='.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '=' at line 1 col 7".to_string()
+            "error@1,7: unexpected character '='. Token starting character must be alphabetic, \" or -.".to_string()
         );
     }
 
