@@ -273,12 +273,7 @@ impl Scanner {
         tokens: &mut Vec<Token>,
     ) -> Result<State, Box<dyn Error>> {
         if self.buf.is_empty() && !c.is_alphanumeric() {
-            return Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Long option must start with alphanumeric UTF-8 character.",
-                    c, self.row, self.col
-                ),
-            }));
+            return Err(self.scan_error(ScanErrorKind::InvalidLongOptionStart(c)));
         }
 
         let last_option_char = self.buf.chars().last();
@@ -690,7 +685,7 @@ mod test {
             .expect_err("Should reject long options that include double hyphens.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '-' at line 1 col 7. Invalid '--' sequence within long option.".to_string()
+            "error: invalid character '-' at line 1 col 7. Invalid '--' sequence within long option.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -698,7 +693,7 @@ mod test {
             .expect_err("Should reject long options that include '-_'.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '_' at line 1 col 7. Invalid '-_' sequence within long option.".to_string()
+            "error: invalid character '_' at line 1 col 7. Invalid '-_' sequence within long option.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -706,7 +701,7 @@ mod test {
             .expect_err("Should reject long options that include '_-'.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '-' at line 1 col 7. Invalid '_-' sequence within long option.".to_string()
+            "error: invalid character '-' at line 1 col 7. Invalid '_-' sequence within long option.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -714,31 +709,31 @@ mod test {
             .expect_err("Should reject long options that include '__'.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '_' at line 1 col 7. Invalid '__' sequence within long option.".to_string()
+            "error: invalid character '_' at line 1 col 7. Invalid '__' sequence within long option.".to_string()
         );
 
         let tokens = Scanner::new()
             .scan("---foo")
-            .expect_err("Should reject long options that start with '-'.");
+            .expect_err("Long option cannot start with '-'.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '-' at line 1 col 3. Long option must start with alphanumeric UTF-8 character.".to_string()
+            "error@1,3: unexpected character '-'. Long option starting character must be alphanumeric.".to_string()
         );
 
         let tokens = Scanner::new()
             .scan("--_foo")
-            .expect_err("Should reject long options that start with '_'.");
+            .expect_err("Long options cannot start with '_'.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '_' at line 1 col 3. Long option must start with alphanumeric UTF-8 character.".to_string()
+            "error@1,3: unexpected character '_'. Long option starting character must be alphanumeric.".to_string()
         );
 
         let tokens = Scanner::new()
             .scan("--=foo")
-            .expect_err("Should reject long options that start with '='.");
+            .expect_err("Long options cannot start with '='.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '=' at line 1 col 3. Long option must start with alphanumeric UTF-8 character.".to_string()
+            "error@1,3: unexpected character '='. Long option starting character must be alphanumeric.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -746,7 +741,7 @@ mod test {
             .expect_err("Should reject long options that include '-='.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '=' at line 1 col 5. Invalid '-=' sequence within long option.".to_string()
+            "error: invalid character '=' at line 1 col 5. Invalid '-=' sequence within long option.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -794,7 +789,7 @@ mod test {
             .expect_err("Should reject non-alphanumeric short options.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character '?' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
+            "error: invalid character '?' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -802,7 +797,7 @@ mod test {
             .expect_err("Should reject whitespace short options.");
         assert_eq!(
             *tokens.to_string(),
-	    "error: invalid character ' ' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
+            "error: invalid character ' ' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
         );
 
         let tokens = Scanner::new()
