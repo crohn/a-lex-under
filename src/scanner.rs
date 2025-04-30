@@ -201,22 +201,17 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::EscapedStringLiteral)
             }
-            s if !c.is_control() => {
+            c if !c.is_control() => {
                 if self.escape {
-                    Err(self.scan_error(ScanErrorKind::InvalidLiteralEscape(s)))
+                    Err(self.scan_error(ScanErrorKind::InvalidLiteralEscape(c)))
                 } else {
                     self.buf.push(c);
                     Ok(State::EscapedStringLiteral)
                 }
             }
-            _ if c.is_control() => Err(Box::new(ParseError {
-                // TODO print control character code
-                // TODO implement test
-                message: format!(
-                    "error: unexpected control character at line {} col {}.",
-                    self.row, self.col
-                ),
-            })),
+            c if c.is_control() => {
+                Err(self.scan_error(ScanErrorKind::UnexpecetdContolCharacter(c)))
+            }
             _ => unreachable!(),
         }
     }
@@ -879,6 +874,11 @@ mod test {
             *tokens.to_string(),
             "error@1,3: unexpected character 'z'. The sequence '\\z' is not valid, only '\\n', '\\r', '\\t' are supported.".to_string()
         );
+
+        let tokens = Scanner::new()
+            .scan("\"\u{8}\"")
+            .expect_err("Unexpected control escape sequence, only whitespaces are supported.");
+        assert_eq!(*tokens.to_string(), "error@1,2: unexpected control character '\\u{8}'. Only '\\n', '\\r', '\\t' are supported.".to_string());
 
         let tokens = Scanner::new()
             .scan("\"\\u\"")

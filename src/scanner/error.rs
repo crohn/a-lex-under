@@ -19,6 +19,7 @@ pub enum ScanErrorKind {
     InvalidIdentifier(char),
     InvalidLiteralEscape(char),
     InvalidTokenStart(char),
+    UnexpecetdContolCharacter(char),
 }
 
 #[derive(Debug)]
@@ -53,6 +54,13 @@ impl Display for ScanError {
                 f,
                 "error@{},{}: unexpected character '{}'. Token starting character must be alphabetic, \" or -.",
                 self.row, self.col, c
+            ),
+            ScanErrorKind::UnexpecetdContolCharacter(c) => write!(
+                f,
+                "error@{},{}: unexpected control character '{}'. Only '\\n', '\\r', '\\t' are supported.",
+                self.row,
+                self.col,
+                c.escape_unicode()
             ),
         }
     }
