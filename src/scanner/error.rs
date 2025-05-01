@@ -23,9 +23,10 @@ pub enum ScanErrorKind {
     InvalidLongOptionStart(char),
     InvalidTokenStart(char),
     UnbalancedDoubleQuotes,
+    UnexpectedContolCharacter(char),
     UnexpectedOptionContinuation(char),
     UnexpectedShortOptionContinuation(char),
-    UnexpectedContolCharacter(char),
+    UnexpectedUnicodeOpeningCurlyBracket,
 }
 
 #[derive(Debug)]
@@ -98,6 +99,13 @@ impl Display for ScanError {
                 self.col,
                 c.escape_unicode()
             ),
+            ScanErrorKind::UnexpectedUnicodeOpeningCurlyBracket => {
+                write!(
+                    f,
+                    "error@{},{}: unexpected character '{{'. Expected codepoint hex digit.",
+                    self.row, self.col
+                )
+            }
         }
     }
 }

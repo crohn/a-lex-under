@@ -363,12 +363,7 @@ impl Scanner {
         match c {
             CURLY_BRACKET_LEFT => {
                 if matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
-                    Err(Box::new(ParseError {
-                        message: format!(
-                            "error: invalid character '{}' at line {} col {}. Cannot nest curly brackets.",
-                            c, self.row, self.col
-                        ),
-                    }))
+                    Err(self.scan_error(ScanErrorKind::UnexpectedUnicodeOpeningCurlyBracket))
                 } else {
                     self.stack.push(c);
                     Ok(State::UnicodeEscapeSequence)
@@ -890,5 +885,13 @@ mod test {
             .scan("\"\\u{7f")
             .expect_err("Unbalanced curly bracket");
         assert_eq!(*tokens.to_string(), "error: unbalanced '{'.".to_string());
+
+        let tokens = Scanner::new()
+            .scan("\"\\u{7f{")
+            .expect_err("Unbalanced curly bracket");
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,7: unexpected character '{'. Expected codepoint hex digit.".to_string()
+        );
     }
 }
