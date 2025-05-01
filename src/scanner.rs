@@ -371,12 +371,7 @@ impl Scanner {
             }
             CURLY_BRACKET_RIGHT => {
                 if !matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
-                    return Err(Box::new(ParseError {
-                        message: format!(
-                            "error: invalid character '{}' at line {} col {}. Unbalanced closing curly bracket.",
-                            c, self.row, self.col
-                        ),
-                    }));
+                    return Err(self.scan_error(ScanErrorKind::UnbalancedCurlyBracket));
                 }
 
                 let codepoint = mem::take(&mut self.utf_codepoint);
@@ -888,10 +883,18 @@ mod test {
 
         let tokens = Scanner::new()
             .scan("\"\\u{7f{")
-            .expect_err("Unbalanced curly bracket");
+            .expect_err("Expected hex digit, got '}'.");
         assert_eq!(
             *tokens.to_string(),
             "error@1,7: unexpected character '{'. Expected codepoint hex digit.".to_string()
+        );
+
+        let tokens = Scanner::new()
+            .scan("\"\\u}")
+            .expect_err("Unbalanced curly bracket");
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,4: unbalanced closing curly bracket '}'".to_string()
         );
     }
 }

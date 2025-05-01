@@ -22,6 +22,7 @@ pub enum ScanErrorKind {
     InvalidLongOptionSequence(char, char),
     InvalidLongOptionStart(char),
     InvalidTokenStart(char),
+    UnbalancedCurlyBracket,
     UnbalancedDoubleQuotes,
     UnexpectedContolCharacter(char),
     UnexpectedOptionContinuation(char),
@@ -77,6 +78,13 @@ impl Display for ScanError {
                 "error@{},{}: unexpected character '{}'. Token starting character must be alphabetic, \" or -.",
                 self.row, self.col, c
             ),
+            ScanErrorKind::UnbalancedCurlyBracket => {
+                write!(
+                    f,
+                    "error@{},{}: unbalanced closing curly bracket '}}'",
+                    self.row, self.col
+                )
+            }
             ScanErrorKind::UnbalancedDoubleQuotes => write!(
                 f,
                 "error@{},{}: unbalanced closing quote '\"'.",
