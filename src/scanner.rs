@@ -278,43 +278,24 @@ impl Scanner {
 
         let last_option_char = self.buf.chars().last();
         match (last_option_char, c) {
-            (Some(HYPHEN), HYPHEN) => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Invalid '--' sequence within long option.",
-                    c, self.row, self.col
-                ),
-            })),
-            (Some(HYPHEN), UNDERSCORE) => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Invalid '-_' sequence within long option.",
-                    c, self.row, self.col
-                ),
-            })),
-            (Some(UNDERSCORE), HYPHEN) => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Invalid '_-' sequence within long option.",
-                    c, self.row, self.col
-                ),
-            })),
-            (Some(UNDERSCORE), UNDERSCORE) => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Invalid '__' sequence within long option.",
-                    c, self.row, self.col
-                ),
-            })),
-            (Some(HYPHEN), EQUALS_SIGN) => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Invalid '-=' sequence within long option.",
-                    c, self.row, self.col
-                ),
-            })),
-            (Some(UNDERSCORE), EQUALS_SIGN) => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Invalid '_=' sequence within long option.",
-                    c, self.row, self.col
-                ),
-            })),
-            // TODO handle other invalid sequences like ==
+            (Some(HYPHEN), HYPHEN) => {
+                Err(self.scan_error(ScanErrorKind::InvalidLongOptionSequence(HYPHEN, HYPHEN)))
+            }
+            (Some(HYPHEN), UNDERSCORE) => {
+                Err(self.scan_error(ScanErrorKind::InvalidLongOptionSequence(HYPHEN, UNDERSCORE)))
+            }
+            (Some(UNDERSCORE), HYPHEN) => {
+                Err(self.scan_error(ScanErrorKind::InvalidLongOptionSequence(UNDERSCORE, HYPHEN)))
+            }
+            (Some(UNDERSCORE), UNDERSCORE) => Err(self.scan_error(
+                ScanErrorKind::InvalidLongOptionSequence(UNDERSCORE, UNDERSCORE),
+            )),
+            (Some(HYPHEN), EQUALS_SIGN) => Err(self.scan_error(
+                ScanErrorKind::InvalidLongOptionSequence(HYPHEN, EQUALS_SIGN),
+            )),
+            (Some(UNDERSCORE), EQUALS_SIGN) => Err(self.scan_error(
+                ScanErrorKind::InvalidLongOptionSequence(UNDERSCORE, EQUALS_SIGN),
+            )),
             (Some(_), HYPHEN) => {
                 self.buf.push(c);
                 Ok(State::LongOption)
@@ -323,6 +304,7 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::LongOption)
             }
+            // treat both '=' and ' ' as separators
             (Some(_), EQUALS_SIGN) => {
                 tokens.push(Token::LongOption(mem::take(&mut self.buf)));
                 Ok(State::Begin)
@@ -682,34 +664,38 @@ mod test {
 
         let tokens = Scanner::new()
             .scan("--foo--bar")
-            .expect_err("Should reject long options that include double hyphens.");
+            .expect_err("Long option cannot contain '--'.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '-' at line 1 col 7. Invalid '--' sequence within long option.".to_string()
+            "error@1,7: unexpected character '-'. Invalid '--' sequence in long option."
+                .to_string()
         );
 
         let tokens = Scanner::new()
             .scan("--foo-_bar")
-            .expect_err("Should reject long options that include '-_'.");
+            .expect_err("Long option cannot include '-_'.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '_' at line 1 col 7. Invalid '-_' sequence within long option.".to_string()
+            "error@1,7: unexpected character '_'. Invalid '-_' sequence in long option."
+                .to_string()
         );
 
         let tokens = Scanner::new()
             .scan("--foo_-bar")
-            .expect_err("Should reject long options that include '_-'.");
+            .expect_err("Long option cannot include '_-'.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '-' at line 1 col 7. Invalid '_-' sequence within long option.".to_string()
+            "error@1,7: unexpected character '-'. Invalid '_-' sequence in long option."
+                .to_string()
         );
 
         let tokens = Scanner::new()
             .scan("--foo__bar")
-            .expect_err("Should reject long options that include '__'.");
+            .expect_err("Long option cannot include '__'.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '_' at line 1 col 7. Invalid '__' sequence within long option.".to_string()
+            "error@1,7: unexpected character '_'. Invalid '__' sequence in long option."
+                .to_string()
         );
 
         let tokens = Scanner::new()
@@ -738,15 +724,16 @@ mod test {
 
         let tokens = Scanner::new()
             .scan("--f-=foo")
-            .expect_err("Should reject long options that include '-='.");
+            .expect_err("Long option cannot include '-='.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '=' at line 1 col 5. Invalid '-=' sequence within long option.".to_string()
+            "error@1,5: unexpected character '='. Invalid '-=' sequence in long option."
+                .to_string()
         );
 
         let tokens = Scanner::new()
             .scan("--foo$bar")
-            .expect_err("Should reject long options that include non-alphanumeric characters.");
+            .expect_err("Long option cannot include non-alphanumeric characters.");
         assert_eq!(
             *tokens.to_string(),
             "error: invalid character '$' at line 1 col 6.".to_string()

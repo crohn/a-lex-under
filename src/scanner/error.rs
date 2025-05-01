@@ -18,6 +18,7 @@ impl Display for ParseError {
 pub enum ScanErrorKind {
     InvalidIdentifier(char),
     InvalidLiteralEscape(char),
+    InvalidLongOptionSequence(char, char),
     InvalidLongOptionStart(char),
     InvalidTokenStart(char),
     UnbalancedDoubleQuotes,
@@ -52,6 +53,13 @@ impl Display for ScanError {
                 "error@{},{}: unexpected character '{}'. The sequence '\\{}' is not valid, only '\\n', '\\r', '\\t' are supported.",
                 self.row, self.col, c, c
             ),
+            ScanErrorKind::InvalidLongOptionSequence(p, c) => {
+                write!(
+                    f,
+                    "error@{},{}: unexpected character '{}'. Invalid '{}{}' sequence in long option.",
+                    self.row, self.col, c, p, c
+                )
+            }
             ScanErrorKind::InvalidLongOptionStart(c) => {
                 write!(
                     f,
