@@ -317,12 +317,7 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::LongOption)
             }
-            _ => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}.",
-                    c, self.row, self.col
-                ),
-            })),
+            (_, c) => Err(self.scan_error(ScanErrorKind::InvalidLongOption(c))),
         }
     }
 
@@ -736,10 +731,11 @@ mod test {
             .expect_err("Long option cannot include non-alphanumeric characters.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '$' at line 1 col 6.".to_string()
+            "error@1,6: unexpected character '$'. Long option can only contain alphanumeric or '_', '-', '=' characters.".to_string()
         );
 
-        // this fails because identifier cannot start with =
+        // this fails because identifier cannot start with '=', as the first '='
+        // is the delimiter
         let tokens = Scanner::new()
             .scan("--foo==bar")
             .expect_err("Identifier cannot start with symbol '='.");
