@@ -321,10 +321,12 @@ impl Scanner {
         }
     }
 
-    /// The scanner is in `Option` state after a `'-'` is encountered.
+    /// The scanner is in `Option` state after a '`-`' is encountered.
     ///
-    /// From this state, it can transition to long or short option, according to
-    /// the value of `c`.
+    /// ```txt
+    /// UTF-8 alphanumeric character -> ShortOption
+    ///                   hyphen (-) -> LongOption
+    /// ```
     fn handle_option(&mut self, c: char) -> Result<State, Box<dyn Error>> {
         match c {
             HYPHEN => Ok(State::LongOption),
@@ -332,12 +334,7 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::ShortOption)
             }
-            _ => Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Short option can include alphanumeric characters only.",
-                    c, self.row, self.col
-                ),
-            })),
+            c => Err(self.scan_error(ScanErrorKind::UnexpectedOptionContinuation(c))),
         }
     }
 
@@ -769,18 +766,26 @@ mod test {
 
         let tokens = Scanner::new()
             .scan("-?")
-            .expect_err("Should reject non-alphanumeric short options.");
+            .expect_err("Non-alphanumeric short option.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character '?' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
+            "error@1,2: unexpected character '?'. Expected one alphanumeric or '-' to continue to Short or Long option.".to_string()
         );
 
         let tokens = Scanner::new()
             .scan("- ")
-            .expect_err("Should reject whitespace short options.");
+            .expect_err("Whitespace in short option '- '");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character ' ' at line 1 col 2. Short option can include alphanumeric characters only.".to_string()
+            "error@1,2: unexpected character ' '. Expected one alphanumeric or '-' to continue to Short or Long option.".to_string()
+        );
+
+        let tokens = Scanner::new()
+            .scan("-\n")
+            .expect_err("Whitespace in short option '-\\n'");
+        assert_eq!(
+            *tokens.to_string(),
+            "error@2,1: unexpected character '\n'. Expected one alphanumeric or '-' to continue to Short or Long option.".to_string()
         );
 
         let tokens = Scanner::new()
