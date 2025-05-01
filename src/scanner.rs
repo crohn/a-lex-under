@@ -349,12 +349,7 @@ impl Scanner {
         if !c.is_whitespace() {
             // illegal character, this means that we had a '-ab' input
             // this prevents that empty option is pushed into tokens, '- '
-            return Err(Box::new(ParseError {
-                message: format!(
-                    "error: invalid character '{}' at line {} col {}. Short option can include only one character.",
-                    c, self.row, self.col
-                ),
-            }));
+            return Err(self.scan_error(ScanErrorKind::UnexpectedShortOptionContinuation(c)));
         }
         tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
         Ok(State::Begin)
@@ -790,10 +785,10 @@ mod test {
 
         let tokens = Scanner::new()
             .scan("-ab")
-            .expect_err("Should reject short options including more than 1 character.");
+            .expect_err("Short option accepts only one character.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid character 'b' at line 1 col 3. Short option can include only one character.".to_string()
+            "error@1,3: unexpected character 'b'. Short option can contain only one UTF-8 alphanumeric character.".to_string()
         );
     }
 

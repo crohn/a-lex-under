@@ -24,6 +24,7 @@ pub enum ScanErrorKind {
     InvalidTokenStart(char),
     UnbalancedDoubleQuotes,
     UnexpectedOptionContinuation(char),
+    UnexpectedShortOptionContinuation(char),
     UnexpectedContolCharacter(char),
 }
 
@@ -83,6 +84,11 @@ impl Display for ScanError {
             ScanErrorKind::UnexpectedOptionContinuation(c) => write!(
                 f,
                 "error@{},{}: unexpected character '{}'. Expected one alphanumeric or '-' to continue to Short or Long option.",
+                self.row, self.col, c
+            ),
+            ScanErrorKind::UnexpectedShortOptionContinuation(c) => write!(
+                f,
+                "error@{},{}: unexpected character '{}'. Short option can contain only one UTF-8 alphanumeric character.",
                 self.row, self.col, c
             ),
             ScanErrorKind::UnexpectedContolCharacter(c) => write!(
