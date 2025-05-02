@@ -376,9 +376,7 @@ impl Scanner {
 
                 let codepoint = mem::take(&mut self.utf_codepoint);
                 let Some(character) = char::from_u32(codepoint) else {
-                    return Err(Box::new(ParseError {
-                        message: "error: invalid UTF-8 codepoint.".to_string(),
-                    }));
+                    return Err(self.scan_error(ScanErrorKind::InvalidCodepoint(codepoint)));
                 };
 
                 if character.is_control() && !character.is_whitespace() {
@@ -838,7 +836,7 @@ mod test {
             .expect_err("String literal: invalid codepoint.");
         assert_eq!(
             *tokens.to_string(),
-            "error: invalid UTF-8 codepoint.".to_string()
+            "error@1,9: invalid UTF-8 codepoint 'd801'".to_string()
         );
 
         let tokens = Scanner::new()

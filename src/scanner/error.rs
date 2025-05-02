@@ -16,6 +16,7 @@ impl Display for ParseError {
 
 #[derive(Debug)]
 pub enum ScanErrorKind {
+    InvalidCodepoint(u32),
     InvalidIdentifier(char),
     InvalidLiteralEscape(char),
     InvalidLongOption(char),
@@ -48,6 +49,11 @@ impl Error for ScanError {}
 impl Display for ScanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
+            ScanErrorKind::InvalidCodepoint(codepoint) => write!(
+                f,
+                "error@{},{}: invalid UTF-8 codepoint '{:x}'",
+                self.row, self.col, codepoint
+            ),
             ScanErrorKind::InvalidIdentifier(c) => write!(
                 f,
                 "error@{},{}: unexpected character '{}'. Identifier can only contain alphanumeric or '_' characters.",
