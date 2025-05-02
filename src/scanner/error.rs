@@ -17,6 +17,7 @@ impl Display for ParseError {
 #[derive(Debug)]
 pub enum ScanErrorKind {
     InvalidCodepoint(u32),
+    InvalidHexDigit(char),
     InvalidIdentifier(char),
     InvalidLiteralEscape(char),
     InvalidLongOption(char),
@@ -25,7 +26,7 @@ pub enum ScanErrorKind {
     InvalidTokenStart(char),
     UnbalancedCurlyBracket,
     UnbalancedDoubleQuotes,
-    UnexpectedContolCharacter(char),
+    UnexpectedControlCharacter(char),
     UnexpectedOptionContinuation(char),
     UnexpectedShortOptionContinuation(char),
     UnexpectedUnicodeOpeningCurlyBracket,
@@ -53,6 +54,11 @@ impl Display for ScanError {
                 f,
                 "error@{},{}: invalid UTF-8 codepoint '{:x}'",
                 self.row, self.col, codepoint
+            ),
+            ScanErrorKind::InvalidHexDigit(c) => write!(
+                f,
+                "error@{},{}: unexpected character '{}'. Invalid hex digit.",
+                self.row, self.col, c
             ),
             ScanErrorKind::InvalidIdentifier(c) => write!(
                 f,
@@ -106,7 +112,7 @@ impl Display for ScanError {
                 "error@{},{}: unexpected character '{}'. Short option can contain only one UTF-8 alphanumeric character.",
                 self.row, self.col, c
             ),
-            ScanErrorKind::UnexpectedContolCharacter(c) => write!(
+            ScanErrorKind::UnexpectedControlCharacter(c) => write!(
                 f,
                 "error@{},{}: unexpected control character '{}'. Only '\\n', '\\r', '\\t' are supported.",
                 self.row,

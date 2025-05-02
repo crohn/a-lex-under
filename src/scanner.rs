@@ -210,7 +210,7 @@ impl Scanner {
                 }
             }
             c if c.is_control() => {
-                Err(self.scan_error(ScanErrorKind::UnexpectedContolCharacter(c)))
+                Err(self.scan_error(ScanErrorKind::UnexpectedControlCharacter(c)))
             }
             _ => unreachable!(),
         }
@@ -360,6 +360,8 @@ impl Scanner {
     ///
     /// The escape sequence continues with `{<HEX_DIGITS>}`.
     fn handle_unicode_escape_sequence(&mut self, c: char) -> Result<State, Box<dyn Error>> {
+        // FIXME -- should enforce first character in this state to be {
+        // at the moment invalid hex digit catches all
         match c {
             CURLY_BRACKET_LEFT => {
                 if matches!(self.stack.last(), Some(&CURLY_BRACKET_LEFT)) {
@@ -380,29 +382,22 @@ impl Scanner {
                 };
 
                 if character.is_control() && !character.is_whitespace() {
-                    return Err(Box::new(ParseError {
-                        message: format!(
-                            "error: invalid character at line {} col {}. Unexpected control character.",
-                            self.row, self.col
-                        ),
-                    }));
+                    return Err(
+                        self.scan_error(ScanErrorKind::UnexpectedControlCharacter(character))
+                    );
                 }
 
+                // FIXME popping here may leave in inconsistent state
                 self.stack.pop();
                 self.buf.push(character);
                 Ok(State::EscapedStringLiteral)
             }
-            _ => {
+            c => {
                 if let Some(value) = c.to_digit(16) {
                     self.utf_codepoint = self.utf_codepoint * 16 + value;
                     Ok(State::UnicodeEscapeSequence)
                 } else {
-                    Err(Box::new(ParseError {
-                        message: format!(
-                            "error: invalid character '{}' at line {} col {}. Invalid hex digit.",
-                            c, self.row, self.col
-                        ),
-                    }))
+                    Err(self.scan_error(ScanErrorKind::InvalidHexDigit(c)))
                 }
             }
         }
@@ -857,8 +852,8 @@ mod test {
             .expect_err("Invalid UTF-8 escape sequence");
         assert_eq!(
             *tokens.to_string(),
-            // FIXME -- invalid hex digit is out of scope
-            "error: invalid character '\"' at line 1 col 4. Invalid hex digit.".to_string()
+            // FIXME -- invalid hex digit is out of scope because curly is expected
+            "error@1,4: unexpected character '\"'. Invalid hex digit.".to_string()
         );
 
         let tokens = Scanner::new().scan("\"").expect_err("Unbalanced quotes");
@@ -893,6 +888,14 @@ mod test {
         assert_eq!(
             *tokens.to_string(),
             "error@1,4: unbalanced closing curly bracket '}'".to_string()
+        );
+
+        let tokens = Scanner::new()
+            .scan("\"\\u{8}")
+            .expect_err("Unbalanced curly bracket");
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,6: unexpected control character '\\u{8}'. Only '\\n', '\\r', '\\t' are supported.".to_string()
         );
     }
 }
