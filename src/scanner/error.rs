@@ -1,19 +1,6 @@
 use std::error::Error;
 use std::fmt::{self, Display};
 
-#[derive(Debug, PartialEq)]
-pub struct ParseError {
-    pub message: String,
-}
-
-impl Error for ParseError {}
-
-impl Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
 #[derive(Debug)]
 pub enum ScanErrorKind {
     InvalidCodepoint(u32),
@@ -28,6 +15,7 @@ pub enum ScanErrorKind {
     UnbalancedDoubleQuotes,
     UnexpectedControlCharacter(char),
     UnexpectedOptionContinuation(char),
+    UnexpectedOptionEndOfInput,
     UnexpectedShortOptionContinuation(char),
     UnexpectedUnicodeOpeningCurlyBracket,
 }
@@ -102,22 +90,27 @@ impl Display for ScanError {
                 "error@{},{}: unbalanced closing quote '\"'.",
                 self.row, self.col
             ),
-            ScanErrorKind::UnexpectedOptionContinuation(c) => write!(
-                f,
-                "error@{},{}: unexpected character '{}'. Expected one alphanumeric or '-' to continue to Short or Long option.",
-                self.row, self.col, c
-            ),
-            ScanErrorKind::UnexpectedShortOptionContinuation(c) => write!(
-                f,
-                "error@{},{}: unexpected character '{}'. Short option can contain only one UTF-8 alphanumeric character.",
-                self.row, self.col, c
-            ),
             ScanErrorKind::UnexpectedControlCharacter(c) => write!(
                 f,
                 "error@{},{}: unexpected control character '{}'. Only '\\n', '\\r', '\\t' are supported.",
                 self.row,
                 self.col,
                 c.escape_unicode()
+            ),
+            ScanErrorKind::UnexpectedOptionContinuation(c) => write!(
+                f,
+                "error@{},{}: unexpected character '{}'. Expected one alphanumeric or '-' to continue to Short or Long option.",
+                self.row, self.col, c
+            ),
+            ScanErrorKind::UnexpectedOptionEndOfInput => write!(
+                f,
+                "error@{},{}: unexpected end of input after '-' character.",
+                self.row, self.col
+            ),
+            ScanErrorKind::UnexpectedShortOptionContinuation(c) => write!(
+                f,
+                "error@{},{}: unexpected character '{}'. Short option can contain only one UTF-8 alphanumeric character.",
+                self.row, self.col, c
             ),
             ScanErrorKind::UnexpectedUnicodeOpeningCurlyBracket => {
                 write!(

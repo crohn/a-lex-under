@@ -1,9 +1,8 @@
 pub mod error;
 
-use std::error::Error;
 use std::mem;
 
-use error::{ParseError, ScanError, ScanErrorKind};
+use error::{ScanError, ScanErrorKind};
 
 const BACKSLASH: char = '\\';
 const CARRIAGE_RETURN: char = '\r';
@@ -52,7 +51,7 @@ impl Default for Scanner {
     fn default() -> Self {
         Self {
             buf: String::new(),
-            col: 1,
+            col: 0,
             escape: false,
             row: 1,
             stack: Vec::new(),
@@ -71,84 +70,109 @@ impl Scanner {
     ///
     /// The scanner uses a string buffer during the scan to accumulate
     /// characters and a state machine to produce tokens.
-    pub fn scan(&mut self, input: &str) -> Result<Vec<Token>, Box<dyn Error>> {
+    pub fn scan(&mut self, input: &str) -> Result<Vec<Token>, ScanError> {
         let mut tokens = Vec::new();
 
-        // main-loop check
-        for (i, c) in input.chars().enumerate() {
-            self.col = i + 1;
+        let mut iterator = input.chars().peekable();
 
-            if c == NEWLINE {
+        // main-loop check
+        while let Some(curr) = iterator.next() {
+            self.col += 1;
+            if curr == NEWLINE {
                 self.row += 1;
                 self.col = 1;
             }
 
             self.state = match self.state {
-                State::Begin => self.handle_begin(c),
-                State::EscapedStringLiteral => self.handle_escaped_string_literal(c, &mut tokens),
-                State::Identifier => self.handle_identifier(c, &mut tokens),
-                State::LongOption => self.handle_long_option(c, &mut tokens),
-                State::Option => self.handle_option(c),
-                State::ShortOption => self.handle_short_option(c, &mut tokens),
-                State::UnicodeEscapeSequence => self.handle_unicode_escape_sequence(c),
+                State::Begin => self.handle_begin(curr),
+                State::EscapedStringLiteral => {
+                    self.handle_escaped_string_literal(curr, &mut tokens)
+                }
+                State::Identifier => self.handle_identifier(curr, &mut tokens),
+                State::LongOption => self.handle_long_option(curr, &mut tokens),
+                State::Option => self.handle_option(curr),
+                // State::ShortOption => self.handle_short_option(curr, &mut tokens),
+                State::UnicodeEscapeSequence => self.handle_unicode_escape_sequence(curr),
+                _ => unreachable!(" --- {}", curr),
             }?;
+
+            // use lookahead to handle end of input and token emission
+            match (&self.state, iterator.peek()) {
+                (State::Begin, None) => {
+                    // Having a non-empty buffer while in State::Begin means
+                    // that the Scanner is in an inconsistent state, because
+                    // that's the state after every token emission.
+                    if !self.buf.is_empty() {
+                        unreachable!("fatal: unexpected end of input.")
+                    }
+                }
+                (State::Identifier, None) => {
+                    if !self.buf.is_empty() {
+                        self.emit_token_identifier(&mut tokens);
+                    }
+                }
+                (State::LongOption, None) => {
+                    if !self.buf.is_empty() {
+                        self.emit_token_long_option(&mut tokens);
+                    }
+                }
+                (State::Option, None) => {
+                    return Err(self.scan_error(ScanErrorKind::UnexpectedOptionEndOfInput));
+                }
+                (State::ShortOption, None) => {
+                    if !self.buf.is_empty() {
+                        self.emit_token_short_option(&mut tokens);
+                    }
+                }
+                (State::LongOption, Some(c)) if c.is_whitespace() => {
+                    self.emit_token_long_option(&mut tokens)
+                }
+                (State::ShortOption, Some(c)) if c.is_whitespace() => {
+                    self.emit_token_short_option(&mut tokens)
+                }
+                (State::ShortOption, Some(c)) => {
+                    self.col += 1;
+                    return Err(
+                        self.scan_error(ScanErrorKind::UnexpectedShortOptionContinuation(*c))
+                    );
+                }
+                _ => continue,
+            }
         }
 
-        // post-loop check
-        // those states that produce tokens encountering whitespace chars need
-        // one more check after end of input is reached, because the main-loop
-        // ended and they will never receive the last delimiter.
-        match self.state {
-            State::Begin => {
-                // Having a non-empty buffer while in Begin state is
-                // inconsistent, because that's the starting state, after every
-                // token production.
-                if !self.buf.is_empty() {
-                    return Err(Box::new(ParseError {
-                        message: format!(
-                            "error: unexpected end of input, buffer content: {}",
-                            self.buf
-                        ),
-                    }));
-                }
+        match self.stack.last() {
+            Some(&CURLY_BRACKET_LEFT) => {
+                Err(self.scan_error(ScanErrorKind::UnbalancedCurlyBracket))
             }
-            State::LongOption => {
-                if !self.buf.is_empty() {
-                    tokens.push(Token::LongOption(mem::take(&mut self.buf)));
-                }
-            }
-            State::ShortOption => {
-                if self.buf.chars().count() == 1 {
-                    tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
-                } else {
-                    return Err(Box::new(ParseError {
-                        message: "error: short option can include only one character.".to_string(),
-                    }));
-                }
-            }
-            State::Option => {
-                return Err(Box::new(ParseError {
-                    message: "error: unexpected end of input, input ends with '-'.".to_string(),
-                }));
-            }
-            State::EscapedStringLiteral => {} // main error is unbalance "
-            State::Identifier => {
-                if !self.buf.is_empty() {
-                    tokens.push(Token::Identifier(mem::take(&mut self.buf)))
-                }
-            }
-            State::UnicodeEscapeSequence => {} // main error is unbalance {
+            Some(&DOUBLE_QUOTES) => Err(self.scan_error(ScanErrorKind::UnbalancedDoubleQuotes)),
+            Some(c) => unreachable!("error: unexpected character in stack: '{}'", c),
+            None => Ok(tokens),
         }
 
-        // There is an unbalanced token somewhere. Stack needs to keep track of
-        // col and row.
-        if !self.stack.is_empty() {
-            return Err(Box::new(ParseError {
-                message: format!("error: unbalanced '{}'.", self.stack.last().unwrap()),
-            }));
-        }
+        // // There is an unbalanced token somewhere. Stack needs to keep track of
+        // // col and row.
+        // if !self.stack.is_empty() {
+        //     return Err(Box::new(ParseError {
+        //         message: format!("error: unbalanced '{}'.", self.stack.last().unwrap()),
+        //     }));
+        // }
 
-        Ok(tokens)
+        // Ok(tokens)
+    }
+
+    fn emit_token_identifier(&mut self, tokens: &mut Vec<Token>) {
+        tokens.push(Token::Identifier(mem::take(&mut self.buf)));
+        self.state = State::Begin;
+    }
+
+    fn emit_token_long_option(&mut self, tokens: &mut Vec<Token>) {
+        tokens.push(Token::LongOption(mem::take(&mut self.buf)));
+        self.state = State::Begin;
+    }
+
+    fn emit_token_short_option(&mut self, tokens: &mut Vec<Token>) {
+        tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
+        self.state = State::Begin;
     }
 
     /// The scanner is in `Begin` state at start or after a token is produced.
@@ -160,7 +184,7 @@ impl Scanner {
     ///                 hyphen (-) -> Option
     ///    whitespace (\n|\t|\r| ) -> Begin
     /// ```
-    fn handle_begin(&mut self, c: char) -> Result<State, Box<dyn Error>> {
+    fn handle_begin(&mut self, c: char) -> Result<State, ScanError> {
         match c {
             DOUBLE_QUOTES => {
                 self.stack.push(c);
@@ -189,7 +213,7 @@ impl Scanner {
         &mut self,
         c: char,
         tokens: &mut Vec<Token>,
-    ) -> Result<State, Box<dyn Error>> {
+    ) -> Result<State, ScanError> {
         match c {
             BACKSLASH => Ok(self.in_literal_backslash(c)),
             DOUBLE_QUOTES => self.handle_quotes_in_literal(tokens),
@@ -224,11 +248,7 @@ impl Scanner {
     ///
     /// When entering this state, the scanner has already processed the first
     /// character, adding it to the string buffer.
-    fn handle_identifier(
-        &mut self,
-        c: char,
-        tokens: &mut Vec<Token>,
-    ) -> Result<State, Box<dyn Error>> {
+    fn handle_identifier(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ScanError> {
         match c {
             UNDERSCORE => {
                 self.buf.push(c);
@@ -267,11 +287,7 @@ impl Scanner {
     /// ---foo         <- Invalid, starts with hyphen
     /// --_foo         <- Invalid, starts with underscore
     /// --foo$bar      <- Invalid, non-alphanumeric
-    fn handle_long_option(
-        &mut self,
-        c: char,
-        tokens: &mut Vec<Token>,
-    ) -> Result<State, Box<dyn Error>> {
+    fn handle_long_option(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ScanError> {
         if self.buf.is_empty() && !c.is_alphanumeric() {
             return Err(self.scan_error(ScanErrorKind::InvalidLongOptionStart(c)));
         }
@@ -309,10 +325,6 @@ impl Scanner {
                 tokens.push(Token::LongOption(mem::take(&mut self.buf)));
                 Ok(State::Begin)
             }
-            _ if c.is_whitespace() => {
-                tokens.push(Token::LongOption(mem::take(&mut self.buf)));
-                Ok(State::Begin)
-            }
             _ if c.is_alphanumeric() => {
                 self.buf.push(c);
                 Ok(State::LongOption)
@@ -327,7 +339,7 @@ impl Scanner {
     /// UTF-8 alphanumeric character -> ShortOption
     ///                   hyphen (-) -> LongOption
     /// ```
-    fn handle_option(&mut self, c: char) -> Result<State, Box<dyn Error>> {
+    fn handle_option(&mut self, c: char) -> Result<State, ScanError> {
         match c {
             HYPHEN => Ok(State::LongOption),
             _ if c.is_alphanumeric() => {
@@ -338,28 +350,11 @@ impl Scanner {
         }
     }
 
-    /// The scanner is in `ShortOption` state after a `-<CHAR>` input is
-    /// encountered, thus we expect a non-empty buffer. Also <CHAR> is an
-    /// alphanumeric UTF-8 char.
-    fn handle_short_option(
-        &mut self,
-        c: char,
-        tokens: &mut Vec<Token>,
-    ) -> Result<State, Box<dyn Error>> {
-        if !c.is_whitespace() {
-            // illegal character, this means that we had a '-ab' input
-            // this prevents that empty option is pushed into tokens, '- '
-            return Err(self.scan_error(ScanErrorKind::UnexpectedShortOptionContinuation(c)));
-        }
-        tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
-        Ok(State::Begin)
-    }
-
     /// The scanner is in `UnicodeEscapeSequence` state after a `\u` escape
     /// sequence is encountered.
     ///
     /// The escape sequence continues with `{<HEX_DIGITS>}`.
-    fn handle_unicode_escape_sequence(&mut self, c: char) -> Result<State, Box<dyn Error>> {
+    fn handle_unicode_escape_sequence(&mut self, c: char) -> Result<State, ScanError> {
         // FIXME -- should enforce first character in this state to be {
         // at the moment invalid hex digit catches all
         match c {
@@ -420,10 +415,7 @@ impl Scanner {
     /// - If the scanner has a '"' on top of the stack, the current character is
     ///   the closing quotes, so produce a `StringLiteral` token.
     /// - In any other case, the presence of '"' is unexpected.
-    fn handle_quotes_in_literal(
-        &mut self,
-        tokens: &mut Vec<Token>,
-    ) -> Result<State, Box<dyn Error>> {
+    fn handle_quotes_in_literal(&mut self, tokens: &mut Vec<Token>) -> Result<State, ScanError> {
         if self.escape {
             self.escape = false;
             self.buf.push(DOUBLE_QUOTES);
@@ -472,8 +464,8 @@ impl Scanner {
         State::EscapedStringLiteral
     }
 
-    fn scan_error(&self, kind: ScanErrorKind) -> Box<ScanError> {
-        Box::new(ScanError::new(kind, self.row, self.col))
+    fn scan_error(&self, kind: ScanErrorKind) -> ScanError {
+        ScanError::new(kind, self.row, self.col)
     }
 }
 
@@ -739,7 +731,7 @@ mod test {
             .expect_err("Should reject empty short options.");
         assert_eq!(
             *tokens.to_string(),
-            "error: unexpected end of input, input ends with '-'.".to_string()
+            "error@1,1: unexpected end of input after '-' character.".to_string()
         );
 
         let tokens = Scanner::new()
@@ -857,22 +849,34 @@ mod test {
         );
 
         let tokens = Scanner::new().scan("\"").expect_err("Unbalanced quotes");
-        assert_eq!(*tokens.to_string(), "error: unbalanced '\"'.".to_string());
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,1: unbalanced closing quote '\"'.".to_string()
+        );
 
         let tokens = Scanner::new()
             .scan("\"\\\"")
             .expect_err("Unbalanced quotes (2)");
-        assert_eq!(*tokens.to_string(), "error: unbalanced '\"'.".to_string());
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,3: unbalanced closing quote '\"'.".to_string()
+        );
 
         let tokens = Scanner::new()
             .scan("\"foo")
             .expect_err("Unbalanced quotes (3)");
-        assert_eq!(*tokens.to_string(), "error: unbalanced '\"'.".to_string());
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,4: unbalanced closing quote '\"'.".to_string()
+        );
 
         let tokens = Scanner::new()
             .scan("\"\\u{7f")
             .expect_err("Unbalanced curly bracket");
-        assert_eq!(*tokens.to_string(), "error: unbalanced '{'.".to_string());
+        assert_eq!(
+            *tokens.to_string(),
+            "error@1,6: unbalanced closing curly bracket '}'".to_string()
+        );
 
         let tokens = Scanner::new()
             .scan("\"\\u{7f{")
