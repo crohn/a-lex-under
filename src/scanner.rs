@@ -88,7 +88,7 @@ impl Scanner {
                 State::EscapedStringLiteral => {
                     self.handle_escaped_string_literal(curr, &mut tokens)
                 }
-                State::Identifier => self.handle_identifier(curr, &mut tokens),
+                State::Identifier => self.handle_identifier(curr),
                 State::LongOption => self.handle_long_option(curr, &mut tokens),
                 State::Option => self.handle_option(curr),
                 // State::ShortOption => self.handle_short_option(curr, &mut tokens),
@@ -124,6 +124,9 @@ impl Scanner {
                         self.emit_token_short_option(&mut tokens);
                     }
                 }
+                (State::Identifier, Some(c)) if c.is_whitespace() => {
+                    self.emit_token_identifier(&mut tokens)
+                }
                 (State::LongOption, Some(c)) if c.is_whitespace() => {
                     self.emit_token_long_option(&mut tokens)
                 }
@@ -148,16 +151,6 @@ impl Scanner {
             Some(c) => unreachable!("error: unexpected character in stack: '{}'", c),
             None => Ok(tokens),
         }
-
-        // // There is an unbalanced token somewhere. Stack needs to keep track of
-        // // col and row.
-        // if !self.stack.is_empty() {
-        //     return Err(Box::new(ParseError {
-        //         message: format!("error: unbalanced '{}'.", self.stack.last().unwrap()),
-        //     }));
-        // }
-
-        // Ok(tokens)
     }
 
     fn emit_token_identifier(&mut self, tokens: &mut Vec<Token>) {
@@ -248,7 +241,7 @@ impl Scanner {
     ///
     /// When entering this state, the scanner has already processed the first
     /// character, adding it to the string buffer.
-    fn handle_identifier(&mut self, c: char, tokens: &mut Vec<Token>) -> Result<State, ScanError> {
+    fn handle_identifier(&mut self, c: char) -> Result<State, ScanError> {
         match c {
             UNDERSCORE => {
                 self.buf.push(c);
@@ -257,12 +250,6 @@ impl Scanner {
             _ if c.is_alphanumeric() => {
                 self.buf.push(c);
                 Ok(State::Identifier)
-            }
-            // whitespace characters are the delimiter that trigger token
-            // production
-            _ if c.is_whitespace() => {
-                tokens.push(Token::Identifier(mem::take(&mut self.buf)));
-                Ok(State::Begin)
             }
             c => Err(self.scan_error(ScanErrorKind::InvalidIdentifier(c))),
         }
@@ -320,7 +307,7 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::LongOption)
             }
-            // treat both '=' and ' ' as separators
+            // FIXME move this to `scan`
             (Some(_), EQUALS_SIGN) => {
                 tokens.push(Token::LongOption(mem::take(&mut self.buf)));
                 Ok(State::Begin)
