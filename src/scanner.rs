@@ -108,12 +108,12 @@ impl Scanner {
                 }
                 (State::Identifier, None) => {
                     if !self.buf.is_empty() {
-                        self.emit_token_identifier(&mut tokens);
+                        self.emit_token(Token::Identifier, &mut tokens);
                     }
                 }
                 (State::LongOption, None) => {
                     if !self.buf.is_empty() {
-                        self.emit_token_long_option(&mut tokens);
+                        self.emit_token(Token::LongOption, &mut tokens);
                     }
                 }
                 (State::Option, None) => {
@@ -121,17 +121,17 @@ impl Scanner {
                 }
                 (State::ShortOption, None) => {
                     if !self.buf.is_empty() {
-                        self.emit_token_short_option(&mut tokens);
+                        self.emit_token(Token::ShortOption, &mut tokens);
                     }
                 }
                 (State::Identifier, Some(c)) if c.is_whitespace() => {
-                    self.emit_token_identifier(&mut tokens)
+                    self.emit_token(Token::Identifier, &mut tokens)
                 }
                 (State::LongOption, Some(c)) if c.is_whitespace() => {
-                    self.emit_token_long_option(&mut tokens)
+                    self.emit_token(Token::LongOption, &mut tokens)
                 }
                 (State::ShortOption, Some(c)) if c.is_whitespace() => {
-                    self.emit_token_short_option(&mut tokens)
+                    self.emit_token(Token::ShortOption, &mut tokens)
                 }
                 (State::ShortOption, Some(c)) => {
                     self.col += 1;
@@ -148,23 +148,13 @@ impl Scanner {
                 Err(self.scan_error(ScanErrorKind::UnbalancedCurlyBracket))
             }
             Some(&DOUBLE_QUOTES) => Err(self.scan_error(ScanErrorKind::UnbalancedDoubleQuotes)),
-            Some(c) => unreachable!("error: unexpected character in stack: '{}'", c),
+            Some(c) => unreachable!("fatal: unexpected character in stack: '{}'", c),
             None => Ok(tokens),
         }
     }
 
-    fn emit_token_identifier(&mut self, tokens: &mut Vec<Token>) {
-        tokens.push(Token::Identifier(mem::take(&mut self.buf)));
-        self.state = State::Begin;
-    }
-
-    fn emit_token_long_option(&mut self, tokens: &mut Vec<Token>) {
-        tokens.push(Token::LongOption(mem::take(&mut self.buf)));
-        self.state = State::Begin;
-    }
-
-    fn emit_token_short_option(&mut self, tokens: &mut Vec<Token>) {
-        tokens.push(Token::ShortOption(mem::take(&mut self.buf)));
+    fn emit_token(&mut self, constructor: fn(String) -> Token, tokens: &mut Vec<Token>) {
+        tokens.push(constructor(mem::take(&mut self.buf)));
         self.state = State::Begin;
     }
 
@@ -307,7 +297,7 @@ impl Scanner {
                 self.buf.push(c);
                 Ok(State::LongOption)
             }
-            // FIXME move this to `scan`
+            // FIXME move this to `scan` <<< search for mem::take
             (Some(_), EQUALS_SIGN) => {
                 tokens.push(Token::LongOption(mem::take(&mut self.buf)));
                 Ok(State::Begin)
@@ -423,7 +413,7 @@ impl Scanner {
             // stack, otherwise it means that the scanner is in an inconsistent
             // state.
             unreachable!(
-                "error@{},{}: inconsistent `EscapedStringLiteral` state. Unbalanced closing quotes.",
+                "fatal@{},{}: inconsistent `EscapedStringLiteral` state. Unbalanced closing quotes.",
                 self.row, self.col
             )
         }
