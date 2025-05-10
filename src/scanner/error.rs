@@ -1,8 +1,12 @@
 use std::error::Error;
 use std::fmt::{self, Display};
 
+pub const EXPECTED_TOKEN_BEGIN: &str = "'\"', '-' or alphabetic UTF-8 character";
+
 #[derive(Debug)]
 pub enum ScanErrorKind {
+    InvalidSymbol { expected: &'static str, got: char },
+    //
     InvalidCodepoint(u32),
     InvalidHexDigit(char),
     InvalidIdentifier(char),
@@ -10,7 +14,6 @@ pub enum ScanErrorKind {
     InvalidLongOption(char),
     InvalidLongOptionSequence(char, char),
     InvalidLongOptionStart(char),
-    InvalidTokenStart(char),
     UnbalancedCurlyBracket,
     UnbalancedDoubleQuotes,
     UnexpectedControlCharacter(char),
@@ -71,11 +74,9 @@ impl Display for ScanError {
                 "unexpected character '{}'. Long option starting character must be alphanumeric.",
                 c
             ),
-            ScanErrorKind::InvalidTokenStart(c) => write!(
-                f,
-                "unexpected character '{}'. Token starting character must be alphabetic, \" or -.",
-                c
-            ),
+            ScanErrorKind::InvalidSymbol { expected, got } => {
+                write!(f, "invalid symbol. Expected {}, got '{}'.", expected, got)
+            }
             ScanErrorKind::UnbalancedCurlyBracket => {
                 write!(f, "unbalanced closing curly bracket '}}'")
             }

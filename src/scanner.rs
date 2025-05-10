@@ -2,7 +2,7 @@ pub mod error;
 
 use std::mem;
 
-use error::{ScanError, ScanErrorKind};
+use error::{EXPECTED_TOKEN_BEGIN, ScanError, ScanErrorKind};
 
 const BACKSLASH: char = '\\';
 const CARRIAGE_RETURN: char = '\r';
@@ -174,12 +174,15 @@ impl Scanner {
                 Ok(State::EscapedStringLiteral)
             }
             HYPHEN => Ok(State::Option),
-            _ if c.is_alphabetic() => {
+            c if c.is_alphabetic() => {
                 self.buf.push(c);
                 Ok(State::Identifier)
             }
-            _ if c.is_whitespace() => Ok(State::Begin),
-            c => Err(self.scan_error(ScanErrorKind::InvalidTokenStart(c))),
+            c if c.is_whitespace() => Ok(State::Begin),
+            c => Err(self.scan_error(ScanErrorKind::InvalidSymbol {
+                expected: EXPECTED_TOKEN_BEGIN,
+                got: c,
+            })),
         }
     }
 
@@ -505,7 +508,8 @@ mod test {
             .expect_err("Identifier cannot start with symbol '_'.");
         assert_eq!(
             *tokens.to_string(),
-            "error@1,1: unexpected character '_'. Token starting character must be alphabetic, \" or -.".to_string()
+            "error@1,1: invalid symbol. Expected '\"', '-' or alphabetic UTF-8 character, got '_'."
+                .to_string()
         );
 
         let tokens = Scanner::new()
@@ -513,7 +517,8 @@ mod test {
             .expect_err("Identifier cannot start with number.");
         assert_eq!(
             *tokens.to_string(),
-            "error@1,1: unexpected character '1'. Token starting character must be alphabetic, \" or -.".to_string()
+            "error@1,1: invalid symbol. Expected '\"', '-' or alphabetic UTF-8 character, got '1'."
+                .to_string()
         );
 
         let tokens = Scanner::new()
@@ -685,7 +690,8 @@ mod test {
             .expect_err("Identifier cannot start with symbol '='.");
         assert_eq!(
             *tokens.to_string(),
-            "error@1,7: unexpected character '='. Token starting character must be alphabetic, \" or -.".to_string()
+            "error@1,7: invalid symbol. Expected '\"', '-' or alphabetic UTF-8 character, got '='."
+                .to_string()
         );
     }
 
