@@ -2,6 +2,8 @@ use crate::cursor::Cursor;
 use crate::scanner::Scanner;
 use std::mem;
 
+const HYPHEN: char = '-';
+
 #[derive(Debug, PartialEq)]
 pub enum State {
     Begin,
@@ -9,12 +11,14 @@ pub enum State {
     EmitTokenWhitespace,
     End,
     Identifier,
+    OptionSelect,
     Whitespace,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
+    OptionShort(String),
     Whitespace,
 }
 
@@ -30,6 +34,8 @@ pub struct Tokenizer<'a> {
 pub enum TokenizationError {
     InvalidControlCharacter,
     UnexpectedEndOfInput,
+    UnexpectedSymbol,
+    UnexpectedWhitespace,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -46,6 +52,7 @@ impl<'a> Tokenizer<'a> {
         match self.state {
             State::Begin => self.handle_begin(),
             State::Identifier => self.handle_identifier(),
+            State::OptionSelect => self.handle_option_select(),
             State::Whitespace => self.handle_whitespace(),
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
@@ -53,6 +60,8 @@ impl<'a> Tokenizer<'a> {
 
     fn handle_begin(&mut self) -> Result<State, TokenizationError> {
         match (self.cursor.curr, self.cursor.next) {
+            (Some(HYPHEN), None) => Err(TokenizationError::UnexpectedEndOfInput),
+            (Some(HYPHEN), _) => Ok(State::OptionSelect),
             (Some(c), None) if c.is_whitespace() => Ok(State::EmitTokenWhitespace),
             (Some(c), None) => {
                 self.string_buffer.push(c);
@@ -90,6 +99,18 @@ impl<'a> Tokenizer<'a> {
                 } else {
                     Ok(State::Identifier)
                 }
+            }
+            _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
+        }
+    }
+
+    fn handle_option_select(&mut self) -> Result<State, TokenizationError> {
+        // NOTE curr can't be None, because of lookahead in handle_begin
+        match (self.cursor.curr, self.cursor.next) {
+            (Some(c), _) if c.is_whitespace() => Err(TokenizationError::UnexpectedWhitespace),
+            (Some(c), _) => {
+                self.string_buffer.push(c);
+                Ok(State::EmitTokenString(Token::OptionShort))
             }
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
@@ -183,6 +204,45 @@ mod test {
                 Ok(Token::Identifier("f".to_string())),
                 Ok(Token::Whitespace),
                 Ok(Token::Identifier("foo".to_string()))
+            ]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("\t f -"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Ok(Token::Whitespace),
+                Ok(Token::Identifier("f".to_string())),
+                Ok(Token::Whitespace),
+                Err(TokenizationError::UnexpectedEndOfInput)
+            ]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("\t f -o 4"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Ok(Token::Whitespace),
+                Ok(Token::Identifier("f".to_string())),
+                Ok(Token::Whitespace),
+                Ok(Token::OptionShort("o".to_string())),
+                Ok(Token::Whitespace),
+                Ok(Token::Identifier("4".to_string())),
+            ]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("\t f -o4"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Ok(Token::Whitespace),
+                Ok(Token::Identifier("f".to_string())),
+                Ok(Token::Whitespace),
+                Ok(Token::OptionShort("o".to_string())),
+                Ok(Token::Identifier("4".to_string())),
             ]
         );
     }
