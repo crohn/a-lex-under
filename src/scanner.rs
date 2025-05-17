@@ -1,5 +1,5 @@
 use crate::cursor::Cursor;
-use std::iter::Iterator;
+use std::iter::{Iterator, Peekable};
 use std::str::Chars;
 
 const NEWLINE: char = '\n';
@@ -7,14 +7,14 @@ const NEWLINE: char = '\n';
 #[derive(Debug)]
 pub struct Scanner<'a> {
     cursor: Cursor,
-    iterator: Chars<'a>,
+    iterator: Peekable<Chars<'a>>,
 }
 
 impl<'a> Scanner<'a> {
     pub fn new(input: &'a str) -> Scanner<'a> {
         Scanner {
             cursor: Cursor::default(),
-            iterator: input.chars(),
+            iterator: input.chars().peekable(),
         }
     }
 }
@@ -27,6 +27,7 @@ impl<'a> Iterator for Scanner<'a> {
 
         if let Some(curr) = self.iterator.next() {
             self.cursor.curr = Some(curr);
+            self.cursor.next = self.iterator.peek().cloned();
 
             if self.cursor.prev == Some(NEWLINE) {
                 self.cursor.row += 1;
@@ -38,6 +39,7 @@ impl<'a> Iterator for Scanner<'a> {
             Some(self.cursor)
         } else {
             self.cursor.curr = None;
+            self.cursor.next = None;
 
             None
         }
