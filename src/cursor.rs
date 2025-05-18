@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cursor {
     pub(crate) col: usize,
     pub(crate) row: usize,
