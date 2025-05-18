@@ -95,13 +95,7 @@ impl<'a> Tokenizer<'a> {
             }
             Some(c) if Tokenizer::is_identifier_start(c) => {
                 self.string_buffer.push(c);
-                match self.cursor.next {
-                    None => State::EmitToken(Token::Identifier),
-                    Some(k) if Tokenizer::is_identifier(k) => State::Identifier,
-                    Some(k) if k.is_whitespace() => State::EmitToken(Token::Identifier),
-                    Some(k) if k.is_control() => self.fail_control_character(),
-                    _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
-                }
+                self.lookahead_identifier()
             }
             Some(c) if c.is_whitespace() => {
                 self.string_buffer.push(c);
@@ -141,13 +135,7 @@ impl<'a> Tokenizer<'a> {
         match self.cursor.curr {
             Some(c) if Tokenizer::is_identifier(c) => {
                 self.string_buffer.push(c);
-                match self.cursor.next {
-                    None => State::EmitToken(Token::Identifier),
-                    Some(k) if Tokenizer::is_identifier(k) => State::Identifier,
-                    Some(k) if k.is_whitespace() => State::EmitToken(Token::Identifier),
-                    Some(k) if k.is_control() => self.fail_control_character(),
-                    _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
-                }
+                self.lookahead_identifier()
             }
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
@@ -226,6 +214,17 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    fn lookahead_identifier(&mut self) -> State {
+        match self.cursor.next {
+            None => State::EmitToken(Token::Identifier),
+            Some(k) if Tokenizer::is_symbol(k) => State::EmitToken(Token::Identifier),
+            Some(k) if Tokenizer::is_identifier(k) => State::Identifier,
+            Some(k) if k.is_whitespace() => State::EmitToken(Token::Identifier),
+            Some(k) if k.is_control() => self.fail_control_character(),
+            _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
+        }
+    }
+
     fn lookahead_numeric_literal(&self, exp: bool, float: bool) -> State {
         match self.cursor.next {
             None => State::Error(TokenizationError::UnexpectedEndOfInput),
@@ -283,6 +282,10 @@ mod test {
 
     fn identifier(value: &str) -> Result<Token, TokenizationError> {
         Ok(Token::Identifier(String::from(value)))
+    }
+
+    fn symbol(value: &str) -> Result<Token, TokenizationError> {
+        Ok(Token::Symbol(String::from(value)))
     }
 
     fn whitespace(value: &str) -> Result<Token, TokenizationError> {
@@ -351,6 +354,10 @@ mod test {
                 }
             ))]
         );
+
+        let tokenizer = Tokenizer::new(Scanner::new("aa!"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokens, vec![identifier("aa"), symbol("!")]);
     }
 
     #[test]
