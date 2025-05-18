@@ -65,15 +65,15 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    pub fn is_identifier(c: char) -> bool {
+    fn is_identifier(c: char) -> bool {
         c == UNDERSCORE || c.is_alphanumeric()
     }
 
-    pub fn is_identifier_start(c: char) -> bool {
+    fn is_identifier_start(c: char) -> bool {
         c == UNDERSCORE || c.is_alphabetic()
     }
 
-    pub fn is_symbol(c: char) -> bool {
+    fn is_symbol(c: char) -> bool {
         c != UNDERSCORE && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
     }
 
