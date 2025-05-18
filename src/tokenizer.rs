@@ -14,6 +14,7 @@ pub enum State {
     Begin,
     EmitToken(fn(String) -> Token),
     End,
+    Error(fn(State, Cursor) -> TokenizationError),
     Identifier,
     NumericLiteral { exp: bool, float: bool },
     Whitespace,
@@ -51,6 +52,7 @@ pub enum TokenizationError {
     UnexpectedFloatingPoint(State, Cursor),
     UnexpectedSign(State, Cursor),
     UnexpectedWhitespace(State, Cursor),
+    Unreachable(State, Cursor),
 }
 
 impl<'a> Tokenizer<'a> {
@@ -75,7 +77,7 @@ impl<'a> Tokenizer<'a> {
         c != UNDERSCORE && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
     }
 
-    fn get_next_state(&mut self) -> Result<State, TokenizationError> {
+    fn get_next_state(&mut self) -> Result<State, State> {
         match self.state {
             State::Begin => self.handle_begin(),
             State::Identifier => self.handle_identifier(),
@@ -85,7 +87,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn handle_begin(&mut self) -> Result<State, TokenizationError> {
+    fn handle_begin(&mut self) -> Result<State, State> {
         match self.cursor.curr {
             Some(c) if Tokenizer::is_symbol(c) => {
                 self.string_buffer.push(c);
@@ -97,9 +99,7 @@ impl<'a> Tokenizer<'a> {
                     None => Ok(State::EmitToken(Token::Identifier)),
                     Some(k) if Tokenizer::is_identifier(k) => Ok(State::Identifier),
                     Some(k) if k.is_whitespace() => Ok(State::EmitToken(Token::Identifier)),
-                    Some(k) if k.is_control() => Err(
-                        TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
-                    ),
+                    Some(k) if k.is_control() => self.fail_control_character(),
                     _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
                 }
             }
@@ -108,9 +108,9 @@ impl<'a> Tokenizer<'a> {
                 match self.cursor.next {
                     None => Ok(State::EmitToken(Token::Whitespace)),
                     Some(k) if k.is_whitespace() => Ok(State::Whitespace),
-                    Some(k) if k.is_control() => Err(
-                        TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
-                    ),
+                    Some(k) if k.is_control() => {
+                        Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+                    }
                     Some(_) => Ok(State::EmitToken(Token::Whitespace)),
                 }
             }
@@ -127,9 +127,9 @@ impl<'a> Tokenizer<'a> {
                         float: false,
                     }),
                     Some(k) if k.is_whitespace() => Ok(State::EmitToken(Token::NumericLiteral)),
-                    Some(k) if k.is_control() => Err(
-                        TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
-                    ),
+                    Some(k) if k.is_control() => {
+                        Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+                    }
                     _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
                 }
             }
@@ -137,7 +137,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn handle_identifier(&mut self) -> Result<State, TokenizationError> {
+    fn handle_identifier(&mut self) -> Result<State, State> {
         match self.cursor.curr {
             Some(c) if Tokenizer::is_identifier(c) => {
                 self.string_buffer.push(c);
@@ -145,9 +145,7 @@ impl<'a> Tokenizer<'a> {
                     None => Ok(State::EmitToken(Token::Identifier)),
                     Some(k) if Tokenizer::is_identifier(k) => Ok(State::Identifier),
                     Some(k) if k.is_whitespace() => Ok(State::EmitToken(Token::Identifier)),
-                    Some(k) if k.is_control() => Err(
-                        TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
-                    ),
+                    Some(k) if k.is_control() => self.fail_control_character(),
                     _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
                 }
             }
@@ -155,18 +153,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn handle_numeric_literal(
-        &mut self,
-        exp: bool,
-        float: bool,
-    ) -> Result<State, TokenizationError> {
+    fn handle_numeric_literal(&mut self, exp: bool, float: bool) -> Result<State, State> {
         match self.cursor.curr {
             Some(DOT) => {
                 if float {
-                    Err(TokenizationError::UnexpectedFloatingPoint(
-                        self.state,
-                        self.cursor,
-                    ))
+                    Err(State::Error(TokenizationError::UnexpectedFloatingPoint))
                 } else {
                     self.string_buffer.push(DOT);
                     self.lookahead_numeric_literal(exp, true)
@@ -174,10 +165,7 @@ impl<'a> Tokenizer<'a> {
             }
             Some(c) if c == LOWER_E || c == UPPER_E => {
                 if exp {
-                    Err(TokenizationError::UnexpectedExponent(
-                        self.state,
-                        self.cursor,
-                    ))
+                    Err(State::Error(TokenizationError::UnexpectedExponent))
                 } else {
                     self.string_buffer.push(c);
                     self.lookahead_numeric_literal(true, true)
@@ -188,7 +176,7 @@ impl<'a> Tokenizer<'a> {
                     self.string_buffer.push(c);
                     self.lookahead_numeric_literal(exp, float)
                 } else {
-                    Err(TokenizationError::UnexpectedSign(self.state, self.cursor))
+                    Err(State::Error(TokenizationError::UnexpectedSign))
                 }
             }
             Some(c) if c.is_numeric() => {
@@ -196,31 +184,30 @@ impl<'a> Tokenizer<'a> {
                 match self.cursor.next {
                     None => Ok(State::EmitToken(Token::NumericLiteral)),
                     Some(k) if k.is_whitespace() => Ok(State::EmitToken(Token::NumericLiteral)),
-                    Some(k) if k.is_control() => Err(
-                        TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
-                    ),
+                    Some(k) if k.is_control() => {
+                        Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+                    }
                     Some(_) => Ok(State::NumericLiteral { exp, float }),
                 }
             }
-            Some(c) if c.is_control() => Err(TokenizationError::UnexpectedControlCharacter(
-                self.state,
-                self.cursor,
-            )),
-            Some(_) => Err(TokenizationError::InvalidCharacter(self.state, self.cursor)),
+            Some(c) if c.is_control() => {
+                Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+            }
+            Some(_) => Err(State::Error(TokenizationError::InvalidCharacter)),
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
     }
 
-    fn handle_whitespace(&mut self) -> Result<State, TokenizationError> {
+    fn handle_whitespace(&mut self) -> Result<State, State> {
         match self.cursor.curr {
             Some(c) if c.is_whitespace() => {
                 self.string_buffer.push(c);
                 match self.cursor.next {
                     None => Ok(State::EmitToken(Token::Whitespace)),
                     Some(k) if k.is_whitespace() => Ok(State::Whitespace),
-                    Some(k) if k.is_control() => Err(
-                        TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
-                    ),
+                    Some(k) if k.is_control() => {
+                        Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+                    }
                     Some(_) => Ok(State::EmitToken(Token::Whitespace)),
                 }
             }
@@ -230,24 +217,24 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn lookahead_numeric_literal(
-        &self,
-        exp: bool,
-        float: bool,
-    ) -> Result<State, TokenizationError> {
+    fn fail_control_character(&mut self) -> Result<State, State> {
+        if let Some(cursor) = self.scanner.next() {
+            self.cursor = cursor;
+            Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+        } else {
+            Err(State::Error(TokenizationError::Unreachable))
+        }
+    }
+
+    fn lookahead_numeric_literal(&self, exp: bool, float: bool) -> Result<State, State> {
         match self.cursor.next {
-            None => Err(TokenizationError::UnexpectedEndOfInput(
-                self.state,
-                self.cursor,
-            )),
-            Some(k) if k.is_whitespace() => Err(TokenizationError::UnexpectedWhitespace(
-                self.state,
-                self.cursor,
-            )),
-            Some(k) if k.is_control() => Err(TokenizationError::UnexpectedControlCharacter(
-                self.state,
-                self.cursor,
-            )),
+            None => Err(State::Error(TokenizationError::UnexpectedEndOfInput)),
+            Some(k) if k.is_whitespace() => {
+                Err(State::Error(TokenizationError::UnexpectedWhitespace))
+            }
+            Some(k) if k.is_control() => {
+                Err(State::Error(TokenizationError::UnexpectedControlCharacter))
+            }
             Some(_) => Ok(State::NumericLiteral { exp, float }),
         }
     }
@@ -277,15 +264,19 @@ impl<'a> Iterator for Tokenizer<'a> {
                 return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
             }
 
+            if let State::Error(emitter) = self.state {
+                self.state = State::End;
+                return Some(Err(emitter(self.state, self.cursor)));
+            }
+
             if let Some(cursor) = self.scanner.next() {
                 self.cursor = cursor;
                 match self.get_next_state() {
                     Ok(next_state) => {
                         self.state = next_state;
                     }
-                    Err(tokenization_error) => {
-                        self.state = State::End;
-                        return Some(Err(tokenization_error));
+                    Err(error_state) => {
+                        self.state = error_state;
                     }
                 }
             } else {
@@ -299,34 +290,80 @@ impl<'a> Iterator for Tokenizer<'a> {
 mod test {
     use super::*;
 
+    fn identifier(value: &str) -> Result<Token, TokenizationError> {
+        Ok(Token::Identifier(String::from(value)))
+    }
+
+    fn whitespace(value: &str) -> Result<Token, TokenizationError> {
+        Ok(Token::Whitespace(String::from(value)))
+    }
+
     #[test]
-    fn u() {
+    fn empty() {
         let tokenizer = Tokenizer::new(Scanner::new(""));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(tokens, vec![]);
+    }
 
-        let tokenizer = Tokenizer::new(Scanner::new("\t "));
+    #[test]
+    fn test_identifier() {
+        let tokenizer = Tokenizer::new(Scanner::new("_"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![Ok(Token::Whitespace("\t ".to_string()))]);
+        assert_eq!(tokens, vec![identifier("_")]);
 
-        let tokenizer = Tokenizer::new(Scanner::new("\t f\n_\rf0o _foo foo"));
+        let tokenizer = Tokenizer::new(Scanner::new("あ"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokens, vec![identifier("あ")]);
+
+        let tokenizer = Tokenizer::new(Scanner::new("アキラ　_foo\t_123\n"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
             tokens,
             vec![
-                Ok(Token::Whitespace("\t ".to_string())),
-                Ok(Token::Identifier("f".to_string())),
-                Ok(Token::Whitespace("\n".to_string())),
-                Ok(Token::Identifier("_".to_string())),
-                Ok(Token::Whitespace("\r".to_string())),
-                Ok(Token::Identifier("f0o".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::Identifier("_foo".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::Identifier("foo".to_string()))
+                identifier("アキラ"),
+                whitespace("　"),
+                identifier("_foo"),
+                whitespace("\t"),
+                identifier("_123"),
+                whitespace("\n")
             ]
         );
 
+        let tokenizer = Tokenizer::new(Scanner::new("a\u{18}"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![Err(TokenizationError::UnexpectedControlCharacter(
+                State::End,
+                Cursor {
+                    col: 2,
+                    row: 1,
+                    curr: Some('\u{18}'),
+                    prev: Some('a'),
+                    next: None,
+                }
+            ))]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("アキラ\u{18}"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![Err(TokenizationError::UnexpectedControlCharacter(
+                State::End,
+                Cursor {
+                    col: 4,
+                    row: 1,
+                    curr: Some('\u{18}'),
+                    prev: Some('ラ'),
+                    next: None
+                }
+            ))]
+        );
+    }
+
+    #[test]
+    fn u() {
         let tokenizer = Tokenizer::new(Scanner::new("\t f _ck -o4"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
