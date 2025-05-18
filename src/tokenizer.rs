@@ -15,7 +15,7 @@ pub enum State {
     EmitToken(fn(String) -> Token),
     End,
     Identifier,
-    NumericLiteral,
+    NumericLiteral { exp: bool, float: bool },
     Whitespace,
 }
 
@@ -37,8 +37,6 @@ pub enum Token {
 #[derive(Debug)]
 pub struct Tokenizer<'a> {
     cursor: Cursor,
-    numeric_exp: bool,
-    numeric_float: bool,
     scanner: Scanner<'a>,
     state: State,
     string_buffer: String,
@@ -59,8 +57,6 @@ impl<'a> Tokenizer<'a> {
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
         Tokenizer {
             cursor: Cursor::default(),
-            numeric_exp: false,
-            numeric_float: false,
             scanner,
             state: State::Begin,
             string_buffer: String::new(),
@@ -83,7 +79,7 @@ impl<'a> Tokenizer<'a> {
         match self.state {
             State::Begin => self.handle_begin(),
             State::Identifier => self.handle_identifier(),
-            State::NumericLiteral => self.handle_numeric_literal(),
+            State::NumericLiteral { exp, float } => self.handle_numeric_literal(exp, float),
             State::Whitespace => self.handle_whitespace(),
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
@@ -121,18 +117,16 @@ impl<'a> Tokenizer<'a> {
             Some(c) if c.is_numeric() => {
                 self.string_buffer.push(c);
                 match self.cursor.next {
-                    None => {
-                        self.numeric_exp = false;
-                        self.numeric_float = false;
-                        Ok(State::EmitToken(Token::NumericLiteral))
-                    }
-                    Some(DOT) | Some(LOWER_E) | Some(UPPER_E) => Ok(State::NumericLiteral),
-                    Some(k) if k.is_numeric() => Ok(State::NumericLiteral),
-                    Some(k) if k.is_whitespace() => {
-                        self.numeric_exp = false;
-                        self.numeric_float = false;
-                        Ok(State::EmitToken(Token::NumericLiteral))
-                    }
+                    None => Ok(State::EmitToken(Token::NumericLiteral)),
+                    Some(DOT) | Some(LOWER_E) | Some(UPPER_E) => Ok(State::NumericLiteral {
+                        exp: false,
+                        float: false,
+                    }),
+                    Some(k) if k.is_numeric() => Ok(State::NumericLiteral {
+                        exp: false,
+                        float: false,
+                    }),
+                    Some(k) if k.is_whitespace() => Ok(State::EmitToken(Token::NumericLiteral)),
                     Some(k) if k.is_control() => Err(
                         TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
                     ),
@@ -161,37 +155,38 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn handle_numeric_literal(&mut self) -> Result<State, TokenizationError> {
+    fn handle_numeric_literal(
+        &mut self,
+        exp: bool,
+        float: bool,
+    ) -> Result<State, TokenizationError> {
         match self.cursor.curr {
             Some(DOT) => {
-                if self.numeric_float {
+                if float {
                     Err(TokenizationError::UnexpectedFloatingPoint(
                         self.state,
                         self.cursor,
                     ))
                 } else {
-                    self.numeric_float = true;
                     self.string_buffer.push(DOT);
-                    self.lookahead_numeric_literal()
+                    self.lookahead_numeric_literal(exp, true)
                 }
             }
             Some(c) if c == LOWER_E || c == UPPER_E => {
-                if self.numeric_exp {
+                if exp {
                     Err(TokenizationError::UnexpectedExponent(
                         self.state,
                         self.cursor,
                     ))
                 } else {
-                    self.numeric_exp = true;
-                    self.numeric_float = true;
                     self.string_buffer.push(c);
-                    self.lookahead_numeric_literal()
+                    self.lookahead_numeric_literal(true, true)
                 }
             }
             Some(c) if c == PLUS || c == HYPHEN => {
                 if matches!(self.cursor.prev, Some(LOWER_E) | Some(UPPER_E)) {
                     self.string_buffer.push(c);
-                    self.lookahead_numeric_literal()
+                    self.lookahead_numeric_literal(exp, float)
                 } else {
                     Err(TokenizationError::UnexpectedSign(self.state, self.cursor))
                 }
@@ -199,25 +194,18 @@ impl<'a> Tokenizer<'a> {
             Some(c) if c.is_numeric() => {
                 self.string_buffer.push(c);
                 match self.cursor.next {
-                    None => {
-                        self.numeric_exp = false;
-                        self.numeric_float = false;
-                        Ok(State::EmitToken(Token::NumericLiteral))
-                    }
-                    Some(k) if k.is_whitespace() => {
-                        self.numeric_exp = false;
-                        self.numeric_float = false;
-                        Ok(State::EmitToken(Token::NumericLiteral))
-                    }
+                    None => Ok(State::EmitToken(Token::NumericLiteral)),
+                    Some(k) if k.is_whitespace() => Ok(State::EmitToken(Token::NumericLiteral)),
                     Some(k) if k.is_control() => Err(
                         TokenizationError::UnexpectedControlCharacter(self.state, self.cursor),
                     ),
-                    Some(_) => Ok(State::NumericLiteral),
+                    Some(_) => Ok(State::NumericLiteral { exp, float }),
                 }
             }
-            Some(c) if c.is_control() => Err(
-                TokenizationError::UnexpectedControlCharacter(self.state, self.cursor)
-            ),
+            Some(c) if c.is_control() => Err(TokenizationError::UnexpectedControlCharacter(
+                self.state,
+                self.cursor,
+            )),
             Some(_) => Err(TokenizationError::InvalidCharacter(self.state, self.cursor)),
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
@@ -242,7 +230,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn lookahead_numeric_literal(&self) -> Result<State, TokenizationError> {
+    fn lookahead_numeric_literal(
+        &self,
+        exp: bool,
+        float: bool,
+    ) -> Result<State, TokenizationError> {
         match self.cursor.next {
             None => Err(TokenizationError::UnexpectedEndOfInput(
                 self.state,
@@ -256,7 +248,7 @@ impl<'a> Tokenizer<'a> {
                 self.state,
                 self.cursor,
             )),
-            Some(_) => Ok(State::NumericLiteral),
+            Some(_) => Ok(State::NumericLiteral { exp, float }),
         }
     }
 }
