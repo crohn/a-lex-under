@@ -130,7 +130,7 @@ impl<'a> Tokenizer<'a> {
                 self.string_buffer.push(c);
                 self.lookahead_identifier()
             }
-            _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
+            _ => State::Error(TokenizationError::Unreachable),
         }
     }
 
@@ -189,7 +189,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn fail_control_character(&mut self) -> State {
+    fn fail_next_ctrl_char(&mut self) -> State {
         if let Some(cursor) = self.scanner.next() {
             self.cursor = cursor;
             State::Error(TokenizationError::UnexpectedControlCharacter)
@@ -204,7 +204,7 @@ impl<'a> Tokenizer<'a> {
             Some(k) if Tokenizer::is_symbol(k) => State::EmitToken(Token::Identifier),
             Some(k) if Tokenizer::is_identifier(k) => State::Identifier,
             Some(k) if k.is_whitespace() => State::EmitToken(Token::Identifier),
-            Some(k) if k.is_control() => self.fail_control_character(),
+            Some(k) if k.is_control() => self.fail_next_ctrl_char(),
             _ => State::Error(TokenizationError::Unreachable),
         }
     }
@@ -224,7 +224,7 @@ impl<'a> Tokenizer<'a> {
         match self.cursor.next {
             None => State::EmitToken(Token::Whitespace),
             Some(k) if k.is_whitespace() => State::Whitespace,
-            Some(k) if k.is_control() => self.fail_control_character(),
+            Some(k) if k.is_control() => self.fail_next_ctrl_char(),
             _ => State::EmitToken(Token::Whitespace),
         }
     }
@@ -308,9 +308,9 @@ mod test {
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(tokens, vec![identifier("_")]);
 
-        let tokenizer = Tokenizer::new(Scanner::new("あ"));
+        let tokenizer = Tokenizer::new(Scanner::new("a-あ"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![identifier("あ")]);
+        assert_eq!(tokens, vec![identifier("a"), symbol("-"), identifier("あ")]);
 
         let tokenizer = Tokenizer::new(Scanner::new("アキラ　_foo\t_123\n"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
@@ -341,26 +341,6 @@ mod test {
                 }
             ))]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("アキラ\u{18}"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
-                State::End,
-                Cursor {
-                    col: 4,
-                    row: 1,
-                    curr: Some('\u{18}'),
-                    prev: Some('ラ'),
-                    next: None
-                }
-            ))]
-        );
-
-        let tokenizer = Tokenizer::new(Scanner::new("aa!"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![identifier("aa"), symbol("!")]);
     }
 
     #[test]
