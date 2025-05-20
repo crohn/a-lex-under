@@ -277,6 +277,10 @@ mod test {
         Ok(Token::Identifier(String::from(value)))
     }
 
+    fn numeric_literal(value: &str) -> Result<Token, TokenizationError> {
+        Ok(Token::NumericLiteral(String::from(value)))
+    }
+
     fn symbol(value: &str) -> Result<Token, TokenizationError> {
         Ok(Token::Symbol(String::from(value)))
     }
@@ -345,11 +349,19 @@ mod test {
 
     #[test]
     fn test_whitespace() {
-        let tokenizer = Tokenizer::new(Scanner::new("\n\r\t    ! "));
+        let tokenizer = Tokenizer::new(Scanner::new("\n\r\t    ! a 2 "));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
             tokens,
-            vec![whitespace("\n\r\t    "), symbol("!"), whitespace(" "),]
+            vec![
+                whitespace("\n\r\t    "),
+                symbol("!"),
+                whitespace(" "),
+                identifier("a"),
+                whitespace(" "),
+                numeric_literal("2"),
+                whitespace(" "),
+            ]
         );
 
         let tokenizer = Tokenizer::new(Scanner::new("\n\r\t    \u{18} "));
