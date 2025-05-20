@@ -293,6 +293,16 @@ mod test {
     }
 
     #[test]
+    fn test_symbol() {
+        let tokenizer = Tokenizer::new(Scanner::new("!@$\u{2602}"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![symbol("!"), symbol("@"), symbol("$"), symbol("\u{2602}"),]
+        );
+    }
+
+    #[test]
     fn test_identifier() {
         let tokenizer = Tokenizer::new(Scanner::new("_"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
