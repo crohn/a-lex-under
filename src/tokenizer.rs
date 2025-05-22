@@ -297,6 +297,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::cursor::CursorBuilder;
 
     fn identifier(value: &str) -> Result<Token, TokenizationError> {
         Ok(Token::Identifier(String::from(value)))
@@ -314,298 +315,191 @@ mod test {
         Ok(Token::Whitespace(String::from(value)))
     }
 
+    fn e_ctrl_char(state: State, cursor: Cursor) -> Result<Token, TokenizationError> {
+        Err(TokenizationError::UnexpectedControlCharacter(state, cursor))
+    }
+
+    fn e_eof(state: State, cursor: Cursor) -> Result<Token, TokenizationError> {
+        Err(TokenizationError::UnexpectedEndOfInput(state, cursor))
+    }
+
+    fn e_float(state: State, cursor: Cursor) -> Result<Token, TokenizationError> {
+        Err(TokenizationError::UnexpectedFloatingPoint(state, cursor))
+    }
+
+    fn e_invalid(state: State, cursor: Cursor) -> Result<Token, TokenizationError> {
+        Err(TokenizationError::InvalidCharacter(state, cursor))
+    }
+
+    fn e_whitespace(state: State, cursor: Cursor) -> Result<Token, TokenizationError> {
+        Err(TokenizationError::UnexpectedWhitespace(state, cursor))
+    }
+
+    fn tokenize(input: &str) -> Vec<Result<Token, TokenizationError>> {
+        let tokenizer = Tokenizer::new(Scanner::new(input));
+        tokenizer.collect()
+    }
+
     #[test]
     fn empty() {
-        let tokenizer = Tokenizer::new(Scanner::new(""));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("\u{18}"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokenize(""), vec![]);
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
+            tokenize("\u{18}"),
+            vec![e_ctrl_char(
                 State::End,
-                Cursor {
-                    row: 1,
-                    col: 1,
-                    curr: Some('\u{18}'),
-                    next: None,
-                    prev: None,
-                }
-            ))]
+                CursorBuilder::new().curr('\u{18}').build()
+            )]
         );
     }
 
     #[test]
     fn test_symbol() {
-        let tokenizer = Tokenizer::new(Scanner::new("!@\u{2602}$"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
+            tokenize("!@\u{2602}$"),
             vec![symbol("!"), symbol("@"), symbol("\u{2602}"), symbol("$"),]
         );
     }
 
     #[test]
     fn test_identifier() {
-        let tokenizer = Tokenizer::new(Scanner::new("_"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![identifier("_")]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("a-あ"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![identifier("a"), symbol("-"), identifier("あ")]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("アキラ　_f1o"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokenize("_"), vec![identifier("_")]);
         assert_eq!(
-            tokens,
+            tokenize("a-あ"),
+            vec![identifier("a"), symbol("-"), identifier("あ")]
+        );
+        assert_eq!(
+            tokenize("アキラ　_f1o"),
             vec![identifier("アキラ"), whitespace("　"), identifier("_f1o"),]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("a\u{18}"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
+            tokenize("a\u{18}"),
+            vec![e_ctrl_char(
                 State::End,
-                Cursor {
-                    col: 2,
-                    row: 1,
-                    curr: Some('\u{18}'),
-                    prev: Some('a'),
-                    next: None,
-                }
-            ))]
+                CursorBuilder::new().col(2).prev('a').curr('\u{18}').build()
+            )]
         );
     }
 
     #[test]
     fn test_numeric_literal() {
-        let tokenizer = Tokenizer::new(Scanner::new("1"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![numeric_literal("1")]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("12 "));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![numeric_literal("12"), whitespace(" ")]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("1 23 45.6 78e9 1.2E+3 4.5e-6"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokenize("1"), vec![numeric_literal("1")]);
         assert_eq!(
-            tokens,
+            tokenize("12 "),
+            vec![numeric_literal("12"), whitespace(" ")]
+        );
+        assert_eq!(
+            tokenize("1 23 45.6 78e9 1.2E+3 4.5e-6"),
             vec![
-                Ok(Token::NumericLiteral("1".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::NumericLiteral("23".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::NumericLiteral("45.6".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::NumericLiteral("78e9".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::NumericLiteral("1.2E+3".to_string())),
-                Ok(Token::Whitespace(" ".to_string())),
-                Ok(Token::NumericLiteral("4.5e-6".to_string())),
+                numeric_literal("1"),
+                whitespace(" "),
+                numeric_literal("23"),
+                whitespace(" "),
+                numeric_literal("45.6"),
+                whitespace(" "),
+                numeric_literal("78e9"),
+                whitespace(" "),
+                numeric_literal("1.2E+3"),
+                whitespace(" "),
+                numeric_literal("4.5e-6"),
             ]
         );
 
-        let tokenizer = Tokenizer::new(Scanner::new("1.2"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![numeric_literal("1.2")]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("1e+2"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![numeric_literal("1e+2")]);
-
-        let tokenizer = Tokenizer::new(Scanner::new("1\u{18}2"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokenize("1.2"), vec![numeric_literal("1.2")]);
+        assert_eq!(tokenize("1e+2"), vec![numeric_literal("1e+2")]);
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
+            tokenize("1\u{18}2"),
+            vec![e_ctrl_char(
                 State::End,
-                Cursor {
-                    col: 2,
-                    row: 1,
-                    curr: Some('\u{18}'),
-                    prev: Some('1'),
-                    next: Some('2')
-                }
-            ))]
+                CursorBuilder::new()
+                    .col(2)
+                    .prev('1')
+                    .curr('\u{18}')
+                    .next('2')
+                    .build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("12\u{18}"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
+            tokenize("12\u{18}"),
+            vec![e_ctrl_char(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: Some('\u{18}'),
-                    prev: Some('2'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('2').curr('\u{18}').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1."));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedEndOfInput(
+            tokenize("1."),
+            vec![e_eof(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: None,
-                    prev: Some('.'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('.').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1. "));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedWhitespace(
+            tokenize("1. "),
+            vec![e_whitespace(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: Some(' '),
-                    prev: Some('.'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('.').curr(' ').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1.\u{18}"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
+            tokenize("1.\u{18}"),
+            vec![e_ctrl_char(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: Some('\u{18}'),
-                    prev: Some('.'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('.').curr('\u{18}').build()
+            )],
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1.2."));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedFloatingPoint(
+            tokenize("1.2."),
+            vec![e_float(
                 State::End,
-                Cursor {
-                    col: 4,
-                    row: 1,
-                    curr: Some('.'),
-                    prev: Some('2'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(4).prev('2').curr('.').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1e"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedEndOfInput(
+            tokenize("1e"),
+            vec![e_eof(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: None,
-                    prev: Some('e'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('e').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1E"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedEndOfInput(
+            tokenize("1E"),
+            vec![e_eof(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: None,
-                    prev: Some('E'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('E').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1a"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::InvalidCharacter(
+            tokenize("1a"),
+            vec![e_invalid(
                 State::End,
-                Cursor {
-                    col: 2,
-                    row: 1,
-                    curr: Some('a'),
-                    prev: Some('1'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(2).prev('1').curr('a').build()
+            )]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("11a"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::InvalidCharacter(
+            tokenize("11a"),
+            vec![e_invalid(
                 State::End,
-                Cursor {
-                    col: 3,
-                    row: 1,
-                    curr: Some('a'),
-                    prev: Some('1'),
-                    next: None
-                }
-            ))]
+                CursorBuilder::new().col(3).prev('1').curr('a').build()
+            )]
         );
     }
 
     #[test]
     fn test_expression() {
-        let tokenizer = Tokenizer::new(Scanner::new("2+2"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
+            tokenize("2+2"),
             vec![numeric_literal("2"), symbol("+"), numeric_literal("2")]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("2.0+2.0"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
+            tokenize("2.0+2.0"),
             vec![numeric_literal("2.0"), symbol("+"), numeric_literal("2.0")]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("1e2+"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(tokens, vec![numeric_literal("1e2"), symbol("+")]);
+        assert_eq!(tokenize("1e2+"), vec![numeric_literal("1e2"), symbol("+")]);
     }
 
     #[test]
     fn test_whitespace() {
-        let tokenizer = Tokenizer::new(Scanner::new("\n\r\t    ! a 2 "));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
+            tokenize("\n\r\t    ! a 2 "),
             vec![
                 whitespace("\n\r\t    "),
                 symbol("!"),
@@ -616,21 +510,18 @@ mod test {
                 whitespace(" "),
             ]
         );
-
-        let tokenizer = Tokenizer::new(Scanner::new("\n\r\t    \u{18} "));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedControlCharacter(
+            tokenize("\n\r\t    \u{18} "),
+            vec![e_ctrl_char(
                 State::End,
-                Cursor {
-                    col: 7,
-                    row: 2,
-                    curr: Some('\u{18}'),
-                    prev: Some(' '),
-                    next: Some(' '),
-                }
-            ))]
+                CursorBuilder::new()
+                    .row(2)
+                    .col(7)
+                    .prev(' ')
+                    .curr('\u{18}')
+                    .next(' ')
+                    .build()
+            )]
         )
     }
 }
