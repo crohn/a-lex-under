@@ -9,12 +9,12 @@ const PLUS: char = '+';
 const UNDERSCORE: char = '_';
 const UPPER_E: char = 'E';
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum State {
     Begin,
     EmitToken(fn(String) -> Token),
     End,
-    Error(fn(State, Cursor) -> TokenizationError),
+    Error(Box<State>, fn(State, Cursor) -> TokenizationError),
     Identifier,
     NumericLiteral { exp: bool, float: bool },
     Whitespace,
@@ -105,9 +105,10 @@ impl<'a> Tokenizer<'a> {
                 self.string_buffer.push(c);
                 self.lookahead_numeric_literal_begin()
             }
-            Some(c) if c.is_control() => {
-                State::Error(TokenizationError::UnexpectedControlCharacter)
-            }
+            Some(c) if c.is_control() => State::Error(
+                Box::new(self.state.clone()),
+                TokenizationError::UnexpectedControlCharacter,
+            ),
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
     }
@@ -118,7 +119,7 @@ impl<'a> Tokenizer<'a> {
                 self.string_buffer.push(c);
                 self.lookahead_identifier()
             }
-            _ => State::Error(TokenizationError::Unreachable),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
@@ -126,7 +127,10 @@ impl<'a> Tokenizer<'a> {
         match self.cursor.curr {
             Some(DOT) => {
                 if float {
-                    State::Error(TokenizationError::UnexpectedFloatingPoint)
+                    State::Error(
+                        Box::new(self.state.clone()),
+                        TokenizationError::UnexpectedFloatingPoint,
+                    )
                 } else {
                     self.string_buffer.push(DOT);
                     self.lookahead_numeric_literal_symbol(exp, true)
@@ -134,7 +138,10 @@ impl<'a> Tokenizer<'a> {
             }
             Some(c) if c == LOWER_E || c == UPPER_E => {
                 if exp {
-                    State::Error(TokenizationError::UnexpectedExponent)
+                    State::Error(
+                        Box::new(self.state.clone()),
+                        TokenizationError::UnexpectedExponent,
+                    )
                 } else {
                     self.string_buffer.push(c);
                     self.lookahead_numeric_literal_symbol(true, true)
@@ -145,17 +152,24 @@ impl<'a> Tokenizer<'a> {
                     self.string_buffer.push(c);
                     self.lookahead_numeric_literal_symbol(exp, float)
                 } else {
-                    State::Error(TokenizationError::UnexpectedSign)
+                    State::Error(
+                        Box::new(self.state.clone()),
+                        TokenizationError::UnexpectedSign,
+                    )
                 }
             }
             Some(c) if c.is_numeric() => {
                 self.string_buffer.push(c);
                 self.lookahead_numeric_literal_number(exp, float)
             }
-            Some(c) if c.is_control() => {
-                State::Error(TokenizationError::UnexpectedControlCharacter)
-            }
-            Some(_) => State::Error(TokenizationError::InvalidCharacter),
+            Some(c) if c.is_control() => State::Error(
+                Box::new(self.state.clone()),
+                TokenizationError::UnexpectedControlCharacter,
+            ),
+            Some(_) => State::Error(
+                Box::new(self.state.clone()),
+                TokenizationError::InvalidCharacter,
+            ),
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
     }
@@ -166,20 +180,23 @@ impl<'a> Tokenizer<'a> {
                 self.string_buffer.push(c);
                 self.lookahead_whitespace()
             }
-            _ => State::Error(TokenizationError::Unreachable),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
     fn fail_on_next(&mut self, emitter: fn(State, Cursor) -> TokenizationError) -> State {
         if let Some(cursor) = self.scanner.next() {
             self.cursor = cursor;
-            State::Error(emitter)
+            State::Error(Box::new(self.state.clone()), emitter)
         } else {
             self.cursor.col += 1;
             self.cursor.prev = self.cursor.curr;
             self.cursor.curr = None;
             self.cursor.next = None;
-            State::Error(TokenizationError::UnexpectedEndOfInput)
+            State::Error(
+                Box::new(self.state.clone()),
+                TokenizationError::UnexpectedEndOfInput,
+            )
         }
     }
 
@@ -192,7 +209,7 @@ impl<'a> Tokenizer<'a> {
             Some(k) if k.is_control() => {
                 self.fail_on_next(TokenizationError::UnexpectedControlCharacter)
             }
-            _ => State::Error(TokenizationError::Unreachable),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
@@ -213,7 +230,7 @@ impl<'a> Tokenizer<'a> {
                 self.fail_on_next(TokenizationError::UnexpectedControlCharacter)
             }
             Some(k) if !k.is_numeric() => self.fail_on_next(TokenizationError::InvalidCharacter),
-            _ => State::Error(TokenizationError::Unreachable),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
@@ -279,9 +296,14 @@ impl<'a> Iterator for Tokenizer<'a> {
                 return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
             }
 
-            if let State::Error(emitter) = self.state {
-                self.state = State::End;
-                return Some(Err(emitter(self.state, self.cursor)));
+            let is_error = matches!(self.state, State::Error(_, _));
+            if is_error {
+                let state = mem::replace(&mut self.state, State::End);
+                if let State::Error(prev, emitter) = state {
+                    return Some(Err(emitter(*prev, self.cursor)));
+                } else {
+                    unreachable!("<{:?}> {:?}", self.state, self.cursor);
+                }
             }
 
             if let Some(cursor) = self.scanner.next() {
@@ -346,7 +368,7 @@ mod test {
         assert_eq!(
             tokenize("\u{18}"),
             vec![e_ctrl_char(
-                State::End,
+                State::Begin,
                 CursorBuilder::new().curr('\u{18}').build()
             )]
         );
@@ -374,7 +396,7 @@ mod test {
         assert_eq!(
             tokenize("a\u{18}"),
             vec![e_ctrl_char(
-                State::End,
+                State::Begin,
                 CursorBuilder::new().col(2).prev('a').curr('\u{18}').build()
             )]
         );
@@ -409,7 +431,7 @@ mod test {
         assert_eq!(
             tokenize("1\u{18}2"),
             vec![e_ctrl_char(
-                State::End,
+                State::Begin,
                 CursorBuilder::new()
                     .col(2)
                     .prev('1')
@@ -421,63 +443,87 @@ mod test {
         assert_eq!(
             tokenize("12\u{18}"),
             vec![e_ctrl_char(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('2').curr('\u{18}').build()
             )]
         );
         assert_eq!(
             tokenize("1."),
             vec![e_eof(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('.').build()
             )]
         );
         assert_eq!(
             tokenize("1. "),
             vec![e_whitespace(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('.').curr(' ').build()
             )]
         );
         assert_eq!(
             tokenize("1.\u{18}"),
             vec![e_ctrl_char(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('.').curr('\u{18}').build()
             )],
         );
         assert_eq!(
             tokenize("1.2."),
             vec![e_float(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: true
+                },
                 CursorBuilder::new().col(4).prev('2').curr('.').build()
             )]
         );
         assert_eq!(
             tokenize("1e"),
             vec![e_eof(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('e').build()
             )]
         );
         assert_eq!(
             tokenize("1E"),
             vec![e_eof(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('E').build()
             )]
         );
         assert_eq!(
             tokenize("1a"),
             vec![e_invalid(
-                State::End,
+                State::Begin,
                 CursorBuilder::new().col(2).prev('1').curr('a').build()
             )]
         );
         assert_eq!(
             tokenize("11a"),
             vec![e_invalid(
-                State::End,
+                State::NumericLiteral {
+                    exp: false,
+                    float: false
+                },
                 CursorBuilder::new().col(3).prev('1').curr('a').build()
             )]
         );
@@ -513,7 +559,7 @@ mod test {
         assert_eq!(
             tokenize("\n\r\t    \u{18} "),
             vec![e_ctrl_char(
-                State::End,
+                State::Whitespace,
                 CursorBuilder::new()
                     .row(2)
                     .col(7)
