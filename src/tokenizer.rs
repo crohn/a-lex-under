@@ -105,6 +105,9 @@ impl<'a> Tokenizer<'a> {
                 self.string_buffer.push(c);
                 self.lookahead_numeric_literal_begin()
             }
+            Some(c) if c.is_control() => {
+                State::Error(TokenizationError::UnexpectedControlCharacter)
+            }
             _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
         }
     }
@@ -205,7 +208,10 @@ impl<'a> Tokenizer<'a> {
                 float: false,
             },
             Some(k) if k.is_whitespace() => State::EmitToken(Token::NumericLiteral),
-            Some(k) if k.is_control() => self.fail_on_next(TokenizationError::UnexpectedControlCharacter),
+            Some(k) if k.is_control() => {
+                self.fail_on_next(TokenizationError::UnexpectedControlCharacter)
+            }
+            Some(k) if !k.is_numeric() => self.fail_on_next(TokenizationError::InvalidCharacter),
             _ => State::Error(TokenizationError::Unreachable),
         }
     }
@@ -214,7 +220,9 @@ impl<'a> Tokenizer<'a> {
         match self.cursor.next {
             None => State::EmitToken(Token::NumericLiteral),
             Some(k) if k.is_whitespace() => State::EmitToken(Token::NumericLiteral),
-            Some(k) if k.is_control() => self.fail_on_next(TokenizationError::UnexpectedControlCharacter),
+            Some(k) if k.is_control() => {
+                self.fail_on_next(TokenizationError::UnexpectedControlCharacter)
+            }
             Some(_) => State::NumericLiteral { exp, float },
         }
     }
@@ -222,8 +230,12 @@ impl<'a> Tokenizer<'a> {
     fn lookahead_numeric_literal_symbol(&mut self, exp: bool, float: bool) -> State {
         match self.cursor.next {
             None => self.fail_on_next(TokenizationError::UnexpectedEndOfInput),
-            Some(k) if k.is_whitespace() => self.fail_on_next(TokenizationError::UnexpectedWhitespace),
-            Some(k) if k.is_control() => self.fail_on_next(TokenizationError::UnexpectedControlCharacter),
+            Some(k) if k.is_whitespace() => {
+                self.fail_on_next(TokenizationError::UnexpectedWhitespace)
+            }
+            Some(k) if k.is_control() => {
+                self.fail_on_next(TokenizationError::UnexpectedControlCharacter)
+            }
             Some(_) => State::NumericLiteral { exp, float },
         }
     }
@@ -304,6 +316,22 @@ mod test {
         let tokenizer = Tokenizer::new(Scanner::new(""));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(tokens, vec![]);
+
+        let tokenizer = Tokenizer::new(Scanner::new("\u{18}"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![Err(TokenizationError::UnexpectedControlCharacter(
+                State::End,
+                Cursor {
+                    row: 1,
+                    col: 1,
+                    curr: Some('\u{18}'),
+                    next: None,
+                    prev: None,
+                }
+            ))]
+        );
     }
 
     #[test]
@@ -402,7 +430,7 @@ mod test {
                 }
             ))]
         );
-        
+
         let tokenizer = Tokenizer::new(Scanner::new("12\u{18}"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
@@ -498,7 +526,7 @@ mod test {
                 }
             ))]
         );
-        
+
         let tokenizer = Tokenizer::new(Scanner::new("1e2+"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
@@ -526,6 +554,38 @@ mod test {
                     row: 1,
                     curr: None,
                     prev: Some('E'),
+                    next: None
+                }
+            ))]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("1a"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![Err(TokenizationError::InvalidCharacter(
+                State::End,
+                Cursor {
+                    col: 2,
+                    row: 1,
+                    curr: Some('a'),
+                    prev: Some('1'),
+                    next: None
+                }
+            ))]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("11a"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![Err(TokenizationError::InvalidCharacter(
+                State::End,
+                Cursor {
+                    col: 3,
+                    row: 1,
+                    curr: Some('a'),
+                    prev: Some('1'),
                     next: None
                 }
             ))]
