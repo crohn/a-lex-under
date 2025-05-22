@@ -83,7 +83,7 @@ impl<'a> Tokenizer<'a> {
             State::Identifier => self.handle_identifier(),
             State::NumericLiteral { exp, float } => self.handle_numeric_literal(exp, float),
             State::Whitespace => self.handle_whitespace(),
-            _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
@@ -109,7 +109,7 @@ impl<'a> Tokenizer<'a> {
                 Box::new(self.state.clone()),
                 TokenizationError::UnexpectedControlCharacter,
             ),
-            _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
@@ -170,7 +170,7 @@ impl<'a> Tokenizer<'a> {
                 Box::new(self.state.clone()),
                 TokenizationError::InvalidCharacter,
             ),
-            _ => unreachable!("<{:?}> {:?}", self.state, self.cursor),
+            _ => State::Error(Box::new(self.state.clone()), TokenizationError::Unreachable),
         }
     }
 
