@@ -203,6 +203,7 @@ impl<'a> Tokenizer<'a> {
                 exp: false,
                 float: false,
             },
+            Some(k) if Tokenizer::is_symbol(k) => State::EmitToken(Token::NumericLiteral),
             Some(k) if k.is_numeric() => State::NumericLiteral {
                 exp: false,
                 float: false,
@@ -219,6 +220,8 @@ impl<'a> Tokenizer<'a> {
     fn lookahead_numeric_literal_number(&mut self, exp: bool, float: bool) -> State {
         match self.cursor.next {
             None => State::EmitToken(Token::NumericLiteral),
+            Some(DOT) => State::NumericLiteral { exp, float },
+            Some(k) if Tokenizer::is_symbol(k) => State::EmitToken(Token::NumericLiteral),
             Some(k) if k.is_whitespace() => State::EmitToken(Token::NumericLiteral),
             Some(k) if k.is_control() => {
                 self.fail_on_next(TokenizationError::UnexpectedControlCharacter)
@@ -527,22 +530,6 @@ mod test {
             ))]
         );
 
-        let tokenizer = Tokenizer::new(Scanner::new("1e2+"));
-        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
-        assert_eq!(
-            tokens,
-            vec![Err(TokenizationError::UnexpectedSign(
-                State::End,
-                Cursor {
-                    col: 4,
-                    row: 1,
-                    curr: Some('+'),
-                    prev: Some('2'),
-                    next: None
-                }
-            ))]
-        );
-
         let tokenizer = Tokenizer::new(Scanner::new("1E"));
         let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
         assert_eq!(
@@ -590,6 +577,27 @@ mod test {
                 }
             ))]
         );
+    }
+
+    #[test]
+    fn test_expression() {
+        let tokenizer = Tokenizer::new(Scanner::new("2+2"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![numeric_literal("2"), symbol("+"), numeric_literal("2")]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("2.0+2.0"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(
+            tokens,
+            vec![numeric_literal("2.0"), symbol("+"), numeric_literal("2.0")]
+        );
+
+        let tokenizer = Tokenizer::new(Scanner::new("1e2+"));
+        let tokens: Vec<Result<Token, TokenizationError>> = tokenizer.collect();
+        assert_eq!(tokens, vec![numeric_literal("1e2"), symbol("+")]);
     }
 
     #[test]
