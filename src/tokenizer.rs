@@ -369,7 +369,7 @@ mod test {
             tokenize("\u{18}"),
             vec![e_ctrl_char(
                 State::Begin,
-                CursorBuilder::new().curr('\u{18}').build()
+                CursorBuilder::new().curr('\u{18}').col(1).build()
             )]
         );
     }
