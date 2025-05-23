@@ -49,22 +49,43 @@ impl<'a> Iterator for Scanner<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::cursor::CursorBuilder;
 
     #[test]
-    fn t() {
-        let scanner = Scanner::new("hello world");
-
-        for cursor in scanner {
-            println!("{:?}", cursor);
-        }
-    }
-
-    #[test]
-    fn u() {
-        let scanner = Scanner::new("hello\nworld");
-
-        for cursor in scanner {
-            println!("{:?}", cursor);
-        }
+    fn scan() {
+        let cursors: Vec<Cursor> = Scanner::new("h\nwb\u{18}").collect();
+        assert_eq!(cursors.len(), 5);
+        assert_eq!(
+            cursors,
+            vec![
+                CursorBuilder::new().col(1).curr('h').next('\n').build(),
+                CursorBuilder::new()
+                    .col(2)
+                    .prev('h')
+                    .curr('\n')
+                    .next('w')
+                    .build(),
+                CursorBuilder::new()
+                    .row(2)
+                    .col(1)
+                    .prev('\n')
+                    .curr('w')
+                    .next('b')
+                    .build(),
+                CursorBuilder::new()
+                    .row(2)
+                    .col(2)
+                    .prev('w')
+                    .curr('b')
+                    .next('\u{18}')
+                    .build(),
+                CursorBuilder::new()
+                    .row(2)
+                    .col(3)
+                    .prev('b')
+                    .curr('\u{18}')
+                    .build(),
+            ]
+        );
     }
 }
