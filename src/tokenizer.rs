@@ -9,15 +9,11 @@ const PLUS: char = '+';
 const UNDERSCORE: char = '_';
 const UPPER_E: char = 'E';
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum State {
-    Begin,
-    EmitToken(fn(String) -> Token),
-    End,
-    Error(Box<State>, fn(State, Cursor) -> TokenizationError),
-    Identifier,
-    NumericLiteral { exp: bool, float: bool },
-    Whitespace,
+#[derive(Debug)]
+enum Action {
+    StartIdentifier,
+    StartNumericLiteral,
+    Emit(fn(String) -> Token)
 }
 
 // I want the following tokens
@@ -26,7 +22,7 @@ pub enum State {
 // - String Literal -> start with double quotes, supporting escapes
 // - Numeric Literal -> start with numeric, supporting scientific notation, negative on parser
 // - Whitespace -> whitespace sequence
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
     NumericLiteral(String),
@@ -35,32 +31,59 @@ pub enum Token {
     Whitespace(String),
 }
 
+//#[derive(Debug, PartialEq)]
+//pub enum TokenizationError {
+//    InvalidCharacter(State, Cursor),
+//    UnexpectedControlCharacter(State, Cursor),
+//    UnexpectedEndOfInput(State, Cursor),
+//    UnexpectedExponent(State, Cursor),
+//    UnexpectedFloatingPoint(State, Cursor),
+//    UnexpectedSign(State, Cursor),
+//    UnexpectedWhitespace(State, Cursor),
+//    Unreachable(State, Cursor),
+//}
+
+#[derive(Clone, Debug)]
+pub enum ParsingState {
+    Identifier,
+    NumericLiteral { has_dot: bool, has_exp: bool },
+    Symbol,
+    Whitespace,
+}
+
+#[derive(Clone, Debug)]
+pub enum TokenizerState {
+    Ready,
+    Parsing(ParsingState),
+    Complete(Token),
+    Error,
+}
+
+//#[derive(Clone, Debug, PartialEq)]
+//pub enum State {
+//    Begin,
+//    EmitToken(fn(String) -> Token),
+//    End,
+//    Error(Box<State>, fn(State, Cursor) -> TokenizationError),
+//    Identifier,
+//    NumericLiteral { exp: bool, float: bool },
+//    Whitespace,
+//}
+
 #[derive(Debug)]
 pub struct Tokenizer<'a> {
     cursor: Cursor,
     scanner: Scanner<'a>,
-    state: State,
+    state: TokenizerState,
     string_buffer: String,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum TokenizationError {
-    InvalidCharacter(State, Cursor),
-    UnexpectedControlCharacter(State, Cursor),
-    UnexpectedEndOfInput(State, Cursor),
-    UnexpectedExponent(State, Cursor),
-    UnexpectedFloatingPoint(State, Cursor),
-    UnexpectedSign(State, Cursor),
-    UnexpectedWhitespace(State, Cursor),
-    Unreachable(State, Cursor),
 }
 
 impl<'a> Tokenizer<'a> {
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
         Tokenizer {
-            cursor: Cursor::default(),
+            cursor: scanner.curr(),
             scanner,
-            state: State::Begin,
+            state: TokenizerState::Ready,
             string_buffer: String::new(),
         }
     }
@@ -76,7 +99,7 @@ impl<'a> Tokenizer<'a> {
     fn is_symbol(c: char) -> bool {
         c != UNDERSCORE && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
     }
-
+/*
     fn get_next_state(&mut self) -> State {
         match self.state {
             State::Begin => self.handle_begin(),
@@ -270,13 +293,54 @@ impl<'a> Tokenizer<'a> {
             _ => State::EmitToken(Token::Whitespace),
         }
     }
+*/
 }
 
 impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Result<Token, TokenizationError>;
+    type Item = Result<Token, ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
+            if self.cursor.curr.is_none() && self.cursor.next.is_none() {
+                println!("EARLY {:?}", self.cursor);
+                return None;
+            }
+
+            let (next_state, action) = match (&self.state, self.scanner.curr().next) {
+                (TokenizerState::Ready, Some(c)) if c.is_alphabetic() => (TokenizerState::Parsing(ParsingState::Identifier), Action::StartIdentifier),
+                (TokenizerState::Ready, None) => return None,
+                (TokenizerState::Parsing(ParsingState::Identifier), None) => (TokenizerState::Parsing(ParsingState::Identifier), Action::Emit(Token::Identifier)),
+                _ => unimplemented!("state, action"),
+            };
+
+            println!("{:?} {:?}", next_state, action);
+
+            match action {
+                Action::StartIdentifier | Action::StartNumericLiteral => {
+                    println!("Start Identifier");
+                    self.cursor = self.scanner.next()?; // consume next character
+                    if let Some(c) = self.cursor.curr {
+                        self.string_buffer.push(c);
+                    }
+                }
+                Action::Emit(emitter) => {
+                    println!("EMIT");
+                    //self.cursor = self.scanner.next()?; // this is None
+                    self.state = TokenizerState::Complete(emitter(mem::take(&mut self.string_buffer)));
+                }
+                _ => unimplemented!("exec"),
+            }
+
+            
+            if let TokenizerState::Complete(token) = self.state.clone() {
+                println!("DO EMIT");
+                self.state = TokenizerState::Ready;
+                return Some(Ok(token));
+            }
+
+            self.state = next_state;
+
+/*
             if self.state == State::End {
                 return None;
             }
@@ -312,10 +376,27 @@ impl<'a> Iterator for Tokenizer<'a> {
             } else {
                 self.state = State::End;
             }
+*/
         }
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+    
+    #[test]
+    fn a() {
+        let tokenizer = Tokenizer::new(Scanner::new("h"));
+        let tokens: Vec<Result<Token, ()>> = tokenizer.collect();
+        println!("{:?}", tokens);
+        //for token in tokenizer {
+        //    println!("{:?}", token);
+        //}
+    }
+}
+
+/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -571,3 +652,4 @@ mod test {
         )
     }
 }
+*/

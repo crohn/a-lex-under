@@ -12,10 +12,16 @@ pub struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
     pub fn new(input: &'a str) -> Scanner<'a> {
-        Scanner {
-            cursor: Cursor::default(),
-            iterator: input.chars().peekable(),
-        }
+        let mut cursor = Cursor::default();
+        let mut iterator = input.chars().peekable();
+
+        cursor.next = iterator.peek().cloned();
+
+        Scanner { cursor, iterator }
+    }
+
+    pub fn curr(&self) -> Cursor {
+        self.cursor
     }
 }
 
@@ -53,7 +59,10 @@ mod test {
 
     #[test]
     fn scan() {
-        let cursors: Vec<Cursor> = Scanner::new("h\nwb\u{18}").collect();
+        let scanner = Scanner::new("h\nwb\u{18}");
+        assert_eq!(scanner.curr(), CursorBuilder::new().next('h').build());
+
+        let cursors: Vec<Cursor> = scanner.collect();
         assert_eq!(cursors.len(), 5);
         assert_eq!(
             cursors,
