@@ -12,10 +12,15 @@ pub struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
     pub fn new(input: &'a str) -> Scanner<'a> {
-        Scanner {
-            cursor: Cursor::default(),
-            iterator: input.chars().peekable(),
-        }
+        let mut iterator = input.chars().peekable();
+        let mut cursor = Cursor::default();
+        cursor.next = iterator.peek().cloned();
+
+        Scanner { cursor, iterator }
+    }
+
+    pub fn cursor(&self) -> &Cursor {
+        &self.cursor
     }
 }
 
