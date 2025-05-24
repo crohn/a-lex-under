@@ -31,18 +31,20 @@ enum State {
 enum ParseState {
     Identifier,
     NumericLiteral { has_dot: bool, has_exp: bool },
+    Symbol,
     Whitespace,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Error {
     InvalidCharacter { buffer: String, cursor: Cursor },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
     NumericLiteral(String),
+    Symbol(String),
     Whitespace(String),
 }
 
@@ -70,7 +72,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     pub fn is_char_start_numeric_literal(c: char) -> bool {
-        c == DOT || c == PLUS || c == HYPHEN || c == UPPER_E || c == LOWER_E || c.is_numeric()
+        c.is_numeric()
+    }
+
+    pub fn is_char_symbol(c: char) -> bool {
+        !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
     }
 
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
@@ -78,6 +84,22 @@ impl<'a> Tokenizer<'a> {
             scanner,
             state: State::Ready,
             string_buffer: String::new(),
+        }
+    }
+
+    fn emit_numeric_literal_or_error(&self, has_dot: bool, has_exp: bool) -> (State, Action) {
+        if has_dot || has_exp {
+            if let Some(curr) = self.scanner.cursor().curr {
+                if curr.is_numeric() {
+                    (State::Complete(Token::NumericLiteral), Action::EmitToken)
+                } else {
+                    (State::Error, Action::EmitError)
+                }
+            } else {
+                (State::Error, Action::EmitError)
+            }
+        } else {
+            (State::Complete(Token::NumericLiteral), Action::EmitToken)
         }
     }
 }
@@ -99,6 +121,8 @@ impl<'a> Iterator for Tokenizer<'a> {
                             }),
                             Action::Append,
                         )
+                    } else if Tokenizer::is_char_symbol(c) {
+                        (State::Parse(ParseState::Symbol), Action::Append)
                     } else if Tokenizer::is_char_delimiter(c) {
                         (State::Parse(ParseState::Whitespace), Action::Append)
                     } else {
@@ -111,6 +135,8 @@ impl<'a> Iterator for Tokenizer<'a> {
                     if Tokenizer::is_char_identifier(c) {
                         (State::Parse(ParseState::Identifier), Action::Append)
                     } else if Tokenizer::is_char_delimiter(c) {
+                        (State::Complete(Token::Identifier), Action::EmitToken)
+                    } else if Tokenizer::is_char_symbol(c) {
                         (State::Complete(Token::Identifier), Action::EmitToken)
                     } else {
                         (State::Error, Action::EmitError)
@@ -177,13 +203,16 @@ impl<'a> Iterator for Tokenizer<'a> {
                             Action::Append,
                         )
                     } else if Tokenizer::is_char_delimiter(c) {
-                        (State::Complete(Token::NumericLiteral), Action::EmitToken)
+                        self.emit_numeric_literal_or_error(*has_dot, *has_exp)
                     } else {
                         (State::Error, Action::EmitError)
                     }
                 }
-                (State::Parse(ParseState::NumericLiteral { .. }), None) => {
-                    (State::Complete(Token::NumericLiteral), Action::EmitToken)
+                (State::Parse(ParseState::NumericLiteral { has_dot, has_exp }), None) => {
+                    self.emit_numeric_literal_or_error(*has_dot, *has_exp)
+                }
+                (State::Parse(ParseState::Symbol), _) => {
+                    (State::Complete(Token::Symbol), Action::EmitToken)
                 }
 
                 (State::Parse(ParseState::Whitespace), Some(c)) => {
@@ -237,13 +266,174 @@ impl<'a> Iterator for Tokenizer<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::cursor::CursorBuilder;
+
     use super::*;
 
+    fn identifier(s: &str) -> Result<Token, Error> {
+        Ok(Token::Identifier(String::from(s)))
+    }
+
+    fn numeric_literal(s: &str) -> Result<Token, Error> {
+        Ok(Token::NumericLiteral(String::from(s)))
+    }
+
+    fn symbol(s: &str) -> Result<Token, Error> {
+        Ok(Token::Symbol(String::from(s)))
+    }
+
+    fn whitespace(s: &str) -> Result<Token, Error> {
+        Ok(Token::Whitespace(String::from(s)))
+    }
+
+    fn tokenize(input: &str) -> Vec<Result<Token, Error>> {
+        let tokenizer = Tokenizer::new(Scanner::new(input));
+        tokenizer.collect()
+    }
+
     #[test]
-    fn a() {
-        let tokenizer = Tokenizer::new(Scanner::new("hello 42.0e-1 world!"));
-        for token in tokenizer {
-            println!("{:?}", token);
-        }
+    fn empty() {
+        assert_eq!(tokenize(""), vec![]);
+        assert_eq!(
+            tokenize("\u{18}"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::new(),
+                cursor: CursorBuilder::new().col(1).curr('\u{18}').build(),
+            })]
+        );
+    }
+
+    #[test]
+    fn test_symbol() {
+        assert_eq!(
+            tokenize("!@\u{2602}$"),
+            vec![symbol("!"), symbol("@"), symbol("\u{2602}"), symbol("$"),]
+        );
+    }
+
+    #[test]
+    fn test_identifier() {
+        assert_eq!(tokenize("_"), vec![identifier("_")]);
+        assert_eq!(
+            tokenize("a-あ"),
+            vec![identifier("a"), symbol("-"), identifier("あ")]
+        );
+        assert_eq!(
+            tokenize("アキラ　_f1o"),
+            vec![identifier("アキラ"), whitespace("　"), identifier("_f1o"),]
+        );
+        assert_eq!(
+            tokenize("a\u{18}"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("a"),
+                cursor: CursorBuilder::new().col(2).prev('a').curr('\u{18}').build()
+            })]
+        );
+    }
+
+    #[test]
+    fn test_numeric_literal() {
+        assert_eq!(tokenize("1"), vec![numeric_literal("1")]);
+        assert_eq!(
+            tokenize("12 "),
+            vec![numeric_literal("12"), whitespace(" ")]
+        );
+        assert_eq!(
+            tokenize("1 23 45.6 78e9 1.2E+3 4.5e-6"),
+            vec![
+                numeric_literal("1"),
+                whitespace(" "),
+                numeric_literal("23"),
+                whitespace(" "),
+                numeric_literal("45.6"),
+                whitespace(" "),
+                numeric_literal("78e9"),
+                whitespace(" "),
+                numeric_literal("1.2E+3"),
+                whitespace(" "),
+                numeric_literal("4.5e-6"),
+            ]
+        );
+
+        assert_eq!(tokenize("1.2"), vec![numeric_literal("1.2")]);
+        assert_eq!(tokenize("1e+2"), vec![numeric_literal("1e+2")]);
+        assert_eq!(
+            tokenize("1\u{18}2"),
+            vec![
+                Err(Error::InvalidCharacter {
+                    buffer: String::from("1"),
+                    cursor: CursorBuilder::new()
+                        .col(2)
+                        .prev('1')
+                        .curr('\u{18}')
+                        .next('2')
+                        .build()
+                }),
+                numeric_literal("2")
+            ]
+        );
+        assert_eq!(
+            tokenize("12\u{18}"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("12"),
+                cursor: CursorBuilder::new().col(3).prev('2').curr('\u{18}').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("1."),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1."),
+                cursor: CursorBuilder::new().col(2).prev('.').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("1. "),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1."),
+                cursor: CursorBuilder::new().col(3).prev('.').curr(' ').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("1.\u{18}"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1."),
+                cursor: CursorBuilder::new().col(3).prev('.').curr('\u{18}').build()
+            })],
+        );
+        assert_eq!(
+            tokenize("1.2."),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1.2"),
+                cursor: CursorBuilder::new().col(4).prev('2').curr('.').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("1e"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1e"),
+                cursor: CursorBuilder::new().col(2).prev('e').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("1E"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1E"),
+                cursor: CursorBuilder::new().col(2).prev('E').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("1a"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("1"),
+                cursor: CursorBuilder::new().col(2).prev('1').curr('a').build()
+            })]
+        );
+        assert_eq!(
+            tokenize("11a"),
+            vec![Err(Error::InvalidCharacter {
+                buffer: String::from("11"),
+                cursor: CursorBuilder::new().col(3).prev('1').curr('a').build()
+            })]
+        );
     }
 }
