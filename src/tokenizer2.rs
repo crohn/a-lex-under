@@ -99,6 +99,147 @@ impl<'a> Tokenizer<'a> {
             Ok((State::Complete(Token::NumericLiteral), Action::EmitToken))
         }
     }
+
+    fn transition_from_parse_identifier(&self, c: Option<char>) -> Result<(State, Action), ()> {
+        let Some(c) = c else {
+            return Ok((State::Complete(Token::Identifier), Action::EmitToken));
+        };
+
+        if Tokenizer::is_char_identifier(c) {
+            Ok((State::Parse(ParseState::Identifier), Action::Append))
+        } else if Tokenizer::is_char_delimiter(c) {
+            Ok((State::Complete(Token::Identifier), Action::EmitToken))
+        } else if Tokenizer::is_char_symbol(c) {
+            Ok((State::Complete(Token::Identifier), Action::EmitToken))
+        } else {
+            Err(())
+        }
+    }
+
+    fn transition_from_parse_numeric_literal_dot(
+        &self,
+        has_dot: bool,
+        has_exp: bool,
+    ) -> Result<(State, Action), ()> {
+        if has_dot || has_exp {
+            Err(())
+        } else {
+            Ok((
+                State::Parse(ParseState::NumericLiteral {
+                    has_dot: true,
+                    has_exp,
+                }),
+                Action::Append,
+            ))
+        }
+    }
+
+    fn transition_from_parse_numeric_literal_exp(
+        &self,
+        has_dot: bool,
+        has_exp: bool,
+    ) -> Result<(State, Action), ()> {
+        if has_exp {
+            Err(())
+        } else {
+            Ok((
+                State::Parse(ParseState::NumericLiteral {
+                    has_dot,
+                    has_exp: true,
+                }),
+                Action::Append,
+            ))
+        }
+    }
+
+    fn transition_from_parse_numeric_literal_sign(
+        &self,
+        has_dot: bool,
+        has_exp: bool,
+    ) -> Result<(State, Action), ()> {
+        if has_exp && matches!(self.scanner.cursor().curr, Some(UPPER_E) | Some(LOWER_E)) {
+            Ok((
+                State::Parse(ParseState::NumericLiteral { has_dot, has_exp }),
+                Action::Append,
+            ))
+        } else {
+            Err(())
+        }
+    }
+
+    fn transition_from_parse_numeric_literal_some(
+        &self,
+        c: char,
+        has_dot: bool,
+        has_exp: bool,
+    ) -> Result<(State, Action), ()> {
+        if Tokenizer::is_char_numeric_literal(c) {
+            Ok((
+                State::Parse(ParseState::NumericLiteral { has_dot, has_exp }),
+                Action::Append,
+            ))
+        } else if Tokenizer::is_char_delimiter(c) {
+            self.emit_numeric_literal_or_error(has_dot, has_exp)
+        } else {
+            Err(())
+        }
+    }
+
+    fn transition_from_parse_whitespace(&self, c: Option<char>) -> Result<(State, Action), ()> {
+        let Some(c) = c else {
+            return Ok((State::Complete(Token::Whitespace), Action::EmitToken));
+        };
+
+        if Tokenizer::is_char_delimiter(c) {
+            Ok((State::Parse(ParseState::Whitespace), Action::Append))
+        } else {
+            Ok((State::Complete(Token::Whitespace), Action::EmitToken))
+        }
+    }
+
+    fn transition_from_parse_numeric_literal(
+        &self,
+        c: Option<char>,
+        has_dot: bool,
+        has_exp: bool,
+    ) -> Result<(State, Action), ()> {
+        match c {
+            Some(DOT) => self.transition_from_parse_numeric_literal_dot(has_dot, has_exp),
+            Some(UPPER_E) | Some(LOWER_E) => {
+                self.transition_from_parse_numeric_literal_exp(has_dot, has_exp)
+            }
+            Some(PLUS) | Some(HYPHEN) => {
+                self.transition_from_parse_numeric_literal_sign(has_dot, has_exp)
+            }
+
+            Some(c) => self.transition_from_parse_numeric_literal_some(c, has_dot, has_exp),
+            None => self.emit_numeric_literal_or_error(has_dot, has_exp),
+        }
+    }
+
+    fn transition_from_ready(&self, c: Option<char>) -> Result<(State, Action), ()> {
+        let Some(c) = c else {
+            return Ok((State::End, Action::None));
+        };
+
+        if Self::is_char_start_identifier(c) {
+            Ok((State::Parse(ParseState::Identifier), Action::Append))
+        } else if Self::is_char_start_numeric_literal(c) {
+            Ok((
+                State::Parse(ParseState::NumericLiteral {
+                    has_dot: false,
+                    has_exp: false,
+                }),
+                Action::Append,
+            ))
+        } else if Self::is_char_symbol(c) {
+            Ok((State::Parse(ParseState::Symbol), Action::Append))
+        } else if Self::is_char_delimiter(c) {
+            Ok((State::Parse(ParseState::Whitespace), Action::Append))
+        } else {
+            Err(())
+        }
+    }
 }
 
 impl<'a> Iterator for Tokenizer<'a> {
@@ -107,120 +248,20 @@ impl<'a> Iterator for Tokenizer<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let result = match (&self.state, self.scanner.cursor().next) {
-                (State::Ready, Some(c)) => {
-                    if Tokenizer::is_char_start_identifier(c) {
-                        Ok((State::Parse(ParseState::Identifier), Action::Append))
-                    } else if Tokenizer::is_char_start_numeric_literal(c) {
-                        Ok((
-                            State::Parse(ParseState::NumericLiteral {
-                                has_dot: false,
-                                has_exp: false,
-                            }),
-                            Action::Append,
-                        ))
-                    } else if Tokenizer::is_char_symbol(c) {
-                        Ok((State::Parse(ParseState::Symbol), Action::Append))
-                    } else if Tokenizer::is_char_delimiter(c) {
-                        Ok((State::Parse(ParseState::Whitespace), Action::Append))
-                    } else {
-                        Err(())
-                    }
+                (State::Ready, c) => self.transition_from_ready(c),
+                (State::Parse(ParseState::Identifier), c) => {
+                    self.transition_from_parse_identifier(c)
                 }
-                (State::Ready, None) => Ok((State::End, Action::None)),
-
-                (State::Parse(ParseState::Identifier), Some(c)) => {
-                    if Tokenizer::is_char_identifier(c) {
-                        Ok((State::Parse(ParseState::Identifier), Action::Append))
-                    } else if Tokenizer::is_char_delimiter(c) {
-                        Ok((State::Complete(Token::Identifier), Action::EmitToken))
-                    } else if Tokenizer::is_char_symbol(c) {
-                        Ok((State::Complete(Token::Identifier), Action::EmitToken))
-                    } else {
-                        Err(())
-                    }
-                }
-                (State::Parse(ParseState::Identifier), None) => {
-                    Ok((State::Complete(Token::Identifier), Action::EmitToken))
+                (State::Parse(ParseState::NumericLiteral { has_dot, has_exp }), c) => {
+                    self.transition_from_parse_numeric_literal(c, *has_dot, *has_exp)
                 }
 
-                (State::Parse(ParseState::NumericLiteral { has_dot, has_exp }), Some(DOT)) => {
-                    if *has_dot || *has_exp {
-                        Err(())
-                    } else {
-                        Ok((
-                            State::Parse(ParseState::NumericLiteral {
-                                has_dot: true,
-                                has_exp: *has_exp,
-                            }),
-                            Action::Append,
-                        ))
-                    }
+                (State::Parse(ParseState::Whitespace), c) => {
+                    self.transition_from_parse_whitespace(c)
                 }
-                (
-                    State::Parse(ParseState::NumericLiteral { has_dot, has_exp }),
-                    Some(UPPER_E) | Some(LOWER_E),
-                ) => {
-                    if *has_exp {
-                        Err(())
-                    } else {
-                        Ok((
-                            State::Parse(ParseState::NumericLiteral {
-                                has_dot: *has_dot,
-                                has_exp: true,
-                            }),
-                            Action::Append,
-                        ))
-                    }
-                }
-                (
-                    State::Parse(ParseState::NumericLiteral { has_dot, has_exp }),
-                    Some(PLUS) | Some(HYPHEN),
-                ) => {
-                    if *has_exp
-                        && matches!(self.scanner.cursor().curr, Some(UPPER_E) | Some(LOWER_E))
-                    {
-                        Ok((
-                            State::Parse(ParseState::NumericLiteral {
-                                has_dot: *has_dot,
-                                has_exp: *has_exp,
-                            }),
-                            Action::Append,
-                        ))
-                    } else {
-                        Err(())
-                    }
-                }
-                (State::Parse(ParseState::NumericLiteral { has_dot, has_exp }), Some(c)) => {
-                    if Tokenizer::is_char_numeric_literal(c) {
-                        Ok((
-                            State::Parse(ParseState::NumericLiteral {
-                                has_dot: *has_dot,
-                                has_exp: *has_exp,
-                            }),
-                            Action::Append,
-                        ))
-                    } else if Tokenizer::is_char_delimiter(c) {
-                        self.emit_numeric_literal_or_error(*has_dot, *has_exp)
-                    } else {
-                        Err(())
-                    }
-                }
-                (State::Parse(ParseState::NumericLiteral { has_dot, has_exp }), None) => {
-                    self.emit_numeric_literal_or_error(*has_dot, *has_exp)
-                }
+
                 (State::Parse(ParseState::Symbol), _) => {
                     Ok((State::Complete(Token::Symbol), Action::EmitToken))
-                }
-
-                (State::Parse(ParseState::Whitespace), Some(c)) => {
-                    if Tokenizer::is_char_delimiter(c) {
-                        Ok((State::Parse(ParseState::Whitespace), Action::Append))
-                    } else {
-                        Ok((State::Complete(Token::Whitespace), Action::EmitToken))
-                    }
-                }
-                (State::Parse(ParseState::Whitespace), None) => {
-                    Ok((State::Complete(Token::Whitespace), Action::EmitToken))
                 }
 
                 (State::Complete(_), _) => Ok((State::Ready, Action::None)),
@@ -232,6 +273,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 Err(()) => {
                     self.state = State::Ready;
                     self.scanner.next();
+
                     let buffer = mem::take(&mut self.string_buffer);
                     let error = Some(Err(tokenization::Error::InvalidCharacter {
                         buffer,
@@ -244,7 +286,6 @@ impl<'a> Iterator for Tokenizer<'a> {
 
                     match next_action {
                         Action::Append => {
-                            // NOTE do not emit if empty buffer
                             if let Some(cursor) = self.scanner.next() {
                                 if let Some(c) = cursor.curr {
                                     self.string_buffer.push(c);
@@ -252,6 +293,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                             }
                         }
                         Action::EmitToken => {
+                            // do not emit on empty buffer
                             if let State::Complete(emitter) = self.state {
                                 return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
                             }
