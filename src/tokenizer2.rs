@@ -103,8 +103,19 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse_identifier(&self, c: Option<char>) -> Result<(State, Action), ()> {
-        let Some(c) = c else {
+    fn transition_from_parse(&self, parse_state: &ParseState) -> Result<(State, Action), ()> {
+        match parse_state {
+            ParseState::Identifier => self.transition_from_parse_identifier(),
+            ParseState::NumericLiteral { has_dot, has_exp } => {
+                self.transition_from_parse_numeric_literal(*has_dot, *has_exp)
+            }
+            ParseState::Whitespace => self.transition_from_parse_whitespace(),
+            ParseState::Symbol => Ok((Complete(Token::Symbol), EmitToken)),
+        }
+    }
+
+    fn transition_from_parse_identifier(&self) -> Result<(State, Action), ()> {
+        let Some(c) = self.scanner.cursor().next else {
             return Ok((Complete(Token::Identifier), EmitToken));
         };
 
@@ -116,6 +127,25 @@ impl<'a> Tokenizer<'a> {
             Ok((Complete(Token::Identifier), EmitToken))
         } else {
             Err(())
+        }
+    }
+
+    fn transition_from_parse_numeric_literal(
+        &self,
+        has_dot: bool,
+        has_exp: bool,
+    ) -> Result<(State, Action), ()> {
+        match self.scanner.cursor().next {
+            Some(DOT) => self.transition_from_parse_numeric_literal_dot(has_dot, has_exp),
+            Some(UPPER_E) | Some(LOWER_E) => {
+                self.transition_from_parse_numeric_literal_exp(has_dot, has_exp)
+            }
+            Some(PLUS) | Some(HYPHEN) => {
+                self.transition_from_parse_numeric_literal_sign(has_dot, has_exp)
+            }
+
+            Some(c) => self.transition_from_parse_numeric_literal_some(c, has_dot, has_exp),
+            None => self.emit_numeric_literal_or_error(has_dot, has_exp),
         }
     }
 
@@ -188,8 +218,8 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse_whitespace(&self, c: Option<char>) -> Result<(State, Action), ()> {
-        let Some(c) = c else {
+    fn transition_from_parse_whitespace(&self) -> Result<(State, Action), ()> {
+        let Some(c) = self.scanner.cursor().next else {
             return Ok((Complete(Token::Whitespace), EmitToken));
         };
 
@@ -200,28 +230,8 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse_numeric_literal(
-        &self,
-        c: Option<char>,
-        has_dot: bool,
-        has_exp: bool,
-    ) -> Result<(State, Action), ()> {
-        match c {
-            Some(DOT) => self.transition_from_parse_numeric_literal_dot(has_dot, has_exp),
-            Some(UPPER_E) | Some(LOWER_E) => {
-                self.transition_from_parse_numeric_literal_exp(has_dot, has_exp)
-            }
-            Some(PLUS) | Some(HYPHEN) => {
-                self.transition_from_parse_numeric_literal_sign(has_dot, has_exp)
-            }
-
-            Some(c) => self.transition_from_parse_numeric_literal_some(c, has_dot, has_exp),
-            None => self.emit_numeric_literal_or_error(has_dot, has_exp),
-        }
-    }
-
-    fn transition_from_ready(&self, c: Option<char>) -> Result<(State, Action), ()> {
-        let Some(c) = c else {
+    fn transition_from_ready(&self) -> Result<(State, Action), ()> {
+        let Some(c) = self.scanner.cursor().next else {
             return Ok((End, Noop));
         };
 
@@ -250,54 +260,42 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let result = match (&self.state, self.scanner.cursor().next) {
-                (Ready, c) => self.transition_from_ready(c),
-                (Parse(ParseState::Identifier), c) => self.transition_from_parse_identifier(c),
-                (Parse(ParseState::NumericLiteral { has_dot, has_exp }), c) => {
-                    self.transition_from_parse_numeric_literal(c, *has_dot, *has_exp)
-                }
-
-                (Parse(ParseState::Whitespace), c) => self.transition_from_parse_whitespace(c),
-
-                (Parse(ParseState::Symbol), _) => Ok((Complete(Token::Symbol), EmitToken)),
-
-                (Complete(_), _) => Ok((Ready, Noop)),
-
-                (End, _) => return None,
+            let result = match &self.state {
+                Ready => self.transition_from_ready(),
+                Parse(parse_state) => self.transition_from_parse(parse_state),
+                Complete(_) => Ok((Ready, Noop)),
+                End => return None,
             };
 
-            match result {
-                Err(()) => {
-                    self.state = Ready;
-                    self.scanner.next();
+            if let Ok((next_state, next_action)) = result {
+                self.state = next_state;
 
-                    let buffer = mem::take(&mut self.string_buffer);
-                    let error = Some(Err(tokenization::Error::InvalidCharacter {
-                        buffer,
-                        cursor: self.scanner.cursor().clone(),
-                    }));
-                    return error;
-                }
-                Ok((next_state, next_action)) => {
-                    self.state = next_state;
-
-                    match next_action {
-                        Append => {
-                            if let Some(cursor) = self.scanner.next() {
-                                if let Some(c) = cursor.curr {
-                                    self.string_buffer.push(c);
-                                }
+                match next_action {
+                    Append => {
+                        if let Some(cursor) = self.scanner.next() {
+                            if let Some(c) = cursor.curr {
+                                self.string_buffer.push(c);
                             }
                         }
-                        EmitToken => {
-                            // do not emit on empty buffer
-                            if let Complete(emitter) = self.state {
-                                return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
-                            }
-                        }
-                        Noop => continue,
                     }
+                    EmitToken => {
+                        // do not emit on empty buffer
+                        if let Complete(emitter) = self.state {
+                            return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
+                        }
+                    }
+                    Noop => continue,
                 }
+            } else {
+                self.state = Ready;
+                self.scanner.next();
+
+                let buffer = mem::take(&mut self.string_buffer);
+                let error = Some(Err(tokenization::Error::InvalidCharacter {
+                    buffer,
+                    cursor: self.scanner.cursor().clone(),
+                }));
+                return error;
             }
         }
     }
