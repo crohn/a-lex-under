@@ -1,5 +1,5 @@
-use crate::cursor::Cursor;
 use crate::scanner::Scanner;
+use crate::tokenization;
 use std::iter::Iterator;
 use std::mem;
 
@@ -23,7 +23,7 @@ enum State {
     Ready,
     Parse(ParseState),
     Complete(fn(String) -> Token),
-    Error,
+    Error, // remove this -> change to result
     End,
 }
 
@@ -33,11 +33,6 @@ enum ParseState {
     NumericLiteral { has_dot: bool, has_exp: bool },
     Symbol,
     Whitespace,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    InvalidCharacter { buffer: String, cursor: Cursor },
 }
 
 #[derive(Debug, PartialEq)]
@@ -105,7 +100,7 @@ impl<'a> Tokenizer<'a> {
 }
 
 impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Result<Token, Error>;
+    type Item = Result<Token, tokenization::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -247,7 +242,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 Action::EmitError => {
                     self.scanner.next();
                     let buffer = mem::take(&mut self.string_buffer);
-                    let error = Some(Err(Error::InvalidCharacter {
+                    let error = Some(Err(tokenization::Error::InvalidCharacter {
                         buffer,
                         cursor: self.scanner.cursor().clone(),
                     }));
@@ -270,23 +265,23 @@ mod test {
 
     use super::*;
 
-    fn identifier(s: &str) -> Result<Token, Error> {
+    fn identifier(s: &str) -> Result<Token, tokenization::Error> {
         Ok(Token::Identifier(String::from(s)))
     }
 
-    fn numeric_literal(s: &str) -> Result<Token, Error> {
+    fn numeric_literal(s: &str) -> Result<Token, tokenization::Error> {
         Ok(Token::NumericLiteral(String::from(s)))
     }
 
-    fn symbol(s: &str) -> Result<Token, Error> {
+    fn symbol(s: &str) -> Result<Token, tokenization::Error> {
         Ok(Token::Symbol(String::from(s)))
     }
 
-    fn whitespace(s: &str) -> Result<Token, Error> {
+    fn whitespace(s: &str) -> Result<Token, tokenization::Error> {
         Ok(Token::Whitespace(String::from(s)))
     }
 
-    fn tokenize(input: &str) -> Vec<Result<Token, Error>> {
+    fn tokenize(input: &str) -> Vec<Result<Token, tokenization::Error>> {
         let tokenizer = Tokenizer::new(Scanner::new(input));
         tokenizer.collect()
     }
@@ -296,7 +291,7 @@ mod test {
         assert_eq!(tokenize(""), vec![]);
         assert_eq!(
             tokenize("\u{18}"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::new(),
                 cursor: CursorBuilder::new().col(1).curr('\u{18}').build(),
             })]
@@ -324,7 +319,7 @@ mod test {
         );
         assert_eq!(
             tokenize("a\u{18}"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("a"),
                 cursor: CursorBuilder::new().col(2).prev('a').curr('\u{18}').build()
             })]
@@ -360,7 +355,7 @@ mod test {
         assert_eq!(
             tokenize("1\u{18}2"),
             vec![
-                Err(Error::InvalidCharacter {
+                Err(tokenization::Error::InvalidCharacter {
                     buffer: String::from("1"),
                     cursor: CursorBuilder::new()
                         .col(2)
@@ -374,63 +369,63 @@ mod test {
         );
         assert_eq!(
             tokenize("12\u{18}"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("12"),
                 cursor: CursorBuilder::new().col(3).prev('2').curr('\u{18}').build()
             })]
         );
         assert_eq!(
             tokenize("1."),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1."),
                 cursor: CursorBuilder::new().col(2).prev('.').build()
             })]
         );
         assert_eq!(
             tokenize("1. "),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1."),
                 cursor: CursorBuilder::new().col(3).prev('.').curr(' ').build()
             })]
         );
         assert_eq!(
             tokenize("1.\u{18}"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1."),
                 cursor: CursorBuilder::new().col(3).prev('.').curr('\u{18}').build()
             })],
         );
         assert_eq!(
             tokenize("1.2."),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1.2"),
                 cursor: CursorBuilder::new().col(4).prev('2').curr('.').build()
             })]
         );
         assert_eq!(
             tokenize("1e"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1e"),
                 cursor: CursorBuilder::new().col(2).prev('e').build()
             })]
         );
         assert_eq!(
             tokenize("1E"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1E"),
                 cursor: CursorBuilder::new().col(2).prev('E').build()
             })]
         );
         assert_eq!(
             tokenize("1a"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("1"),
                 cursor: CursorBuilder::new().col(2).prev('1').curr('a').build()
             })]
         );
         assert_eq!(
             tokenize("11a"),
-            vec![Err(Error::InvalidCharacter {
+            vec![Err(tokenization::Error::InvalidCharacter {
                 buffer: String::from("11"),
                 cursor: CursorBuilder::new().col(3).prev('1').curr('a').build()
             })]
