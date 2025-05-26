@@ -139,11 +139,11 @@ impl<'a> Tokenizer<'a> {
             return Ok((Complete(Token::Identifier), EmitToken));
         };
 
-        if Tokenizer::is_char_identifier(c) {
+        if Self::is_char_identifier(c) {
             Ok((Parse(ParseState::Identifier), Append))
-        } else if Tokenizer::is_char_delimiter(c) {
+        } else if Self::is_char_delimiter(c) {
             Ok((Complete(Token::Identifier), EmitToken))
-        } else if Tokenizer::is_char_symbol(c) {
+        } else if Self::is_char_symbol(c) {
             Ok((Complete(Token::Identifier), EmitToken))
         } else {
             Err(())
@@ -213,10 +213,10 @@ impl<'a> Tokenizer<'a> {
         c: char,
         num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
-        if Tokenizer::is_char_numeric_literal(c) {
+        if Self::is_char_numeric_literal(c) {
             let next = mem::take(num_lit_state);
             Ok((Parse(ParseState::NumericLiteral(next)), Append))
-        } else if Tokenizer::is_char_delimiter(c) {
+        } else if Self::is_char_delimiter(c) {
             self.emit_numeric_literal_or_error(num_lit_state)
         } else {
             Err(())
@@ -228,7 +228,7 @@ impl<'a> Tokenizer<'a> {
             return Ok((Complete(Token::Whitespace), EmitToken));
         };
 
-        if Tokenizer::is_char_delimiter(c) {
+        if Self::is_char_delimiter(c) {
             Ok((Parse(ParseState::Whitespace), Append))
         } else {
             Ok((Complete(Token::Whitespace), EmitToken))
