@@ -105,14 +105,6 @@ pub struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn is_char_delimiter(c: char) -> bool {
-        c.is_whitespace()
-    }
-
-    pub fn is_char_numeric_literal(c: char) -> bool {
-        c == DOT || c == PLUS || c == HYPHEN || c == UPPER_E || c == LOWER_E || c.is_numeric()
-    }
-
     pub fn classify_char(c: Option<char>) -> CharClass {
         match c {
             Some(UNDERSCORE) => CharClass::SymbolIdentifier,
@@ -133,25 +125,6 @@ impl<'a> Tokenizer<'a> {
             scanner,
             state: State::default(),
             string_buffer: String::new(),
-        }
-    }
-
-    fn emit_numeric_literal_or_error(
-        &self,
-        num_lit_state: &NumericLiteralState,
-    ) -> Result<(State, Action), ()> {
-        if num_lit_state.has_dot || num_lit_state.has_exp {
-            if let Some(curr) = self.scanner.cursor().curr {
-                if curr.is_numeric() {
-                    Ok((Complete(Token::NumericLiteral), EmitToken))
-                } else {
-                    Err(())
-                }
-            } else {
-                Err(())
-            }
-        } else {
-            Ok((Complete(Token::NumericLiteral), EmitToken))
         }
     }
 
@@ -196,15 +169,16 @@ impl<'a> Tokenizer<'a> {
                 let next = mem::take(num_lit_state);
                 Ok((Parse(NumericLiteral(next)), Append))
             }
-            (_, Some(c)) if Self::is_char_numeric_literal(c) => {
-                let next = mem::take(num_lit_state);
-                Ok((Parse(NumericLiteral(next)), Append))
-            }
-            (_, Some(c)) if Self::is_char_delimiter(c) => {
-                self.emit_numeric_literal_or_error(num_lit_state)
-            }
-            (_, None) => self.emit_numeric_literal_or_error(num_lit_state),
-            _ => Err(()),
+            (curr, next) => match (Self::classify_char(curr), Self::classify_char(next)) {
+                (CharClass::Numeric, CharClass::Whitespace | CharClass::None) => {
+                    Ok((Complete(Token::NumericLiteral), EmitToken))
+                }
+                (_, CharClass::Numeric | CharClass::SymbolNumericLiteral) => {
+                    let next = mem::take(num_lit_state);
+                    Ok((Parse(NumericLiteral(next)), Append))
+                }
+                _ => Err(()),
+            },
         }
     }
 
