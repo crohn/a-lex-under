@@ -58,6 +58,26 @@ impl Default for NumericLiteralState {
     }
 }
 
+impl NumericLiteralState {
+    pub fn apply_dot(&mut self) -> Result<Self, ()> {
+        if self.has_dot || self.has_exp {
+            Err(())
+        } else {
+            self.has_dot = true;
+            Ok(mem::take(self))
+        }
+    }
+
+    pub fn apply_exp(&mut self) -> Result<Self, ()> {
+        if self.has_exp {
+            Err(())
+        } else {
+            self.has_exp = true;
+            Ok(mem::take(self))
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
@@ -155,72 +175,28 @@ impl<'a> Tokenizer<'a> {
         &self,
         num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
-        match self.scanner.cursor().next {
-            Some(DOT) => self.transition_from_parse_numeric_literal_dot(num_lit_state),
-            Some(UPPER_E) | Some(LOWER_E) => {
-                self.transition_from_parse_numeric_literal_exp(num_lit_state)
+        match (self.scanner.cursor().curr, self.scanner.cursor().next) {
+            (_, Some(DOT)) => {
+                let next = num_lit_state.apply_dot()?;
+                Ok((Parse(NumericLiteral(next)), Append))
             }
-            Some(PLUS) | Some(HYPHEN) => {
-                self.transition_from_parse_numeric_literal_sign(num_lit_state)
+            (_, Some(UPPER_E) | Some(LOWER_E)) => {
+                let next = num_lit_state.apply_exp()?;
+                Ok((Parse(NumericLiteral(next)), Append))
             }
-
-            Some(c) => self.transition_from_parse_numeric_literal_some(c, num_lit_state),
-            None => self.emit_numeric_literal_or_error(num_lit_state),
-        }
-    }
-
-    fn transition_from_parse_numeric_literal_dot(
-        &self,
-        num_lit_state: &mut NumericLiteralState,
-    ) -> Result<(State, Action), ()> {
-        if num_lit_state.has_dot || num_lit_state.has_exp {
-            Err(())
-        } else {
-            let mut next = mem::take(num_lit_state);
-            next.has_dot = true;
-            Ok((Parse(NumericLiteral(next)), Append))
-        }
-    }
-
-    fn transition_from_parse_numeric_literal_exp(
-        &self,
-        num_lit_state: &mut NumericLiteralState,
-    ) -> Result<(State, Action), ()> {
-        if num_lit_state.has_exp {
-            Err(())
-        } else {
-            let mut next = mem::take(num_lit_state);
-            next.has_exp = true;
-            Ok((Parse(NumericLiteral(next)), Append))
-        }
-    }
-
-    fn transition_from_parse_numeric_literal_sign(
-        &self,
-        num_lit_state: &mut NumericLiteralState,
-    ) -> Result<(State, Action), ()> {
-        if num_lit_state.has_exp
-            && matches!(self.scanner.cursor().curr, Some(UPPER_E) | Some(LOWER_E))
-        {
-            let next = mem::take(num_lit_state);
-            Ok((Parse(NumericLiteral(next)), Append))
-        } else {
-            Err(())
-        }
-    }
-
-    fn transition_from_parse_numeric_literal_some(
-        &self,
-        c: char,
-        num_lit_state: &mut NumericLiteralState,
-    ) -> Result<(State, Action), ()> {
-        if Self::is_char_numeric_literal(c) {
-            let next = mem::take(num_lit_state);
-            Ok((Parse(NumericLiteral(next)), Append))
-        } else if Self::is_char_delimiter(c) {
-            self.emit_numeric_literal_or_error(num_lit_state)
-        } else {
-            Err(())
+            (Some(UPPER_E) | Some(LOWER_E), Some(PLUS) | Some(HYPHEN)) => {
+                let next = mem::take(num_lit_state);
+                Ok((Parse(NumericLiteral(next)), Append))
+            }
+            (_, Some(c)) if Self::is_char_numeric_literal(c) => {
+                let next = mem::take(num_lit_state);
+                Ok((Parse(NumericLiteral(next)), Append))
+            }
+            (_, Some(c)) if Self::is_char_delimiter(c) => {
+                self.emit_numeric_literal_or_error(num_lit_state)
+            }
+            (_, None) => self.emit_numeric_literal_or_error(num_lit_state),
+            _ => Err(()),
         }
     }
 
@@ -272,35 +248,38 @@ impl<'a> Iterator for Tokenizer<'a> {
                 End => return None,
             };
 
-            if let Ok((next_state, next_action)) = result {
-                self.state = next_state;
+            match result {
+                Ok((next_state, Append)) => {
+                    self.state = next_state;
 
-                match next_action {
-                    Append => {
-                        if let Some(cursor) = self.scanner.next() {
-                            if let Some(c) = cursor.curr {
-                                self.string_buffer.push(c);
-                            }
+                    if let Some(cursor) = self.scanner.next() {
+                        if let Some(c) = cursor.curr {
+                            self.string_buffer.push(c);
                         }
                     }
-                    EmitToken => {
-                        // do not emit on empty buffer
-                        if let Complete(emitter) = self.state {
-                            return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
-                        }
-                    }
-                    Noop => continue,
                 }
-            } else {
-                self.state = Ready;
-                self.scanner.next();
+                Ok((next_state, EmitToken)) => {
+                    // we can skip updating state here to save one cycle,
+                    // because of mem::take at the beginning of the loop
+                    if let Complete(emitter) = next_state {
+                        return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
+                    }
+                }
+                Ok((next_state, Noop)) => {
+                    self.state = next_state;
+                    continue;
+                }
+                Err(()) => {
+                    self.state = Ready;
+                    self.scanner.next();
 
-                let buffer = mem::take(&mut self.string_buffer);
-                let error = Some(Err(tokenization::Error::InvalidCharacter {
-                    buffer,
-                    cursor: self.scanner.cursor().clone(),
-                }));
-                return error;
+                    let buffer = mem::take(&mut self.string_buffer);
+                    let error = Some(Err(tokenization::Error::InvalidCharacter {
+                        buffer,
+                        cursor: self.scanner.cursor().clone(),
+                    }));
+                    return error;
+                }
             }
         }
     }
