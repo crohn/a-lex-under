@@ -4,6 +4,7 @@ use std::iter::Iterator;
 use std::mem;
 
 use Action::*;
+use ParseState::*;
 use State::*;
 
 const DOT: char = '.';
@@ -125,12 +126,12 @@ impl<'a> Tokenizer<'a> {
 
     fn transition_from_parse(&self, parse_state: &mut ParseState) -> Result<(State, Action), ()> {
         match parse_state {
-            ParseState::Identifier => self.transition_from_parse_identifier(),
-            ParseState::NumericLiteral(num_lit_state) => {
+            Identifier => self.transition_from_parse_identifier(),
+            NumericLiteral(num_lit_state) => {
                 self.transition_from_parse_numeric_literal(num_lit_state)
             }
-            ParseState::Whitespace => self.transition_from_parse_whitespace(),
-            ParseState::Symbol => Ok((Complete(Token::Symbol), EmitToken)),
+            Whitespace => self.transition_from_parse_whitespace(),
+            Symbol => Ok((Complete(Token::Symbol), EmitToken)),
         }
     }
 
@@ -140,7 +141,7 @@ impl<'a> Tokenizer<'a> {
         };
 
         if Self::is_char_identifier(c) {
-            Ok((Parse(ParseState::Identifier), Append))
+            Ok((Parse(Identifier), Append))
         } else if Self::is_char_delimiter(c) {
             Ok((Complete(Token::Identifier), EmitToken))
         } else if Self::is_char_symbol(c) {
@@ -177,7 +178,7 @@ impl<'a> Tokenizer<'a> {
         } else {
             let mut next = mem::take(num_lit_state);
             next.has_dot = true;
-            Ok((Parse(ParseState::NumericLiteral(next)), Append))
+            Ok((Parse(NumericLiteral(next)), Append))
         }
     }
 
@@ -190,7 +191,7 @@ impl<'a> Tokenizer<'a> {
         } else {
             let mut next = mem::take(num_lit_state);
             next.has_exp = true;
-            Ok((Parse(ParseState::NumericLiteral(next)), Append))
+            Ok((Parse(NumericLiteral(next)), Append))
         }
     }
 
@@ -202,7 +203,7 @@ impl<'a> Tokenizer<'a> {
             && matches!(self.scanner.cursor().curr, Some(UPPER_E) | Some(LOWER_E))
         {
             let next = mem::take(num_lit_state);
-            Ok((Parse(ParseState::NumericLiteral(next)), Append))
+            Ok((Parse(NumericLiteral(next)), Append))
         } else {
             Err(())
         }
@@ -215,7 +216,7 @@ impl<'a> Tokenizer<'a> {
     ) -> Result<(State, Action), ()> {
         if Self::is_char_numeric_literal(c) {
             let next = mem::take(num_lit_state);
-            Ok((Parse(ParseState::NumericLiteral(next)), Append))
+            Ok((Parse(NumericLiteral(next)), Append))
         } else if Self::is_char_delimiter(c) {
             self.emit_numeric_literal_or_error(num_lit_state)
         } else {
@@ -229,7 +230,7 @@ impl<'a> Tokenizer<'a> {
         };
 
         if Self::is_char_delimiter(c) {
-            Ok((Parse(ParseState::Whitespace), Append))
+            Ok((Parse(Whitespace), Append))
         } else {
             Ok((Complete(Token::Whitespace), EmitToken))
         }
@@ -241,16 +242,16 @@ impl<'a> Tokenizer<'a> {
         };
 
         if Self::is_char_start_identifier(c) {
-            Ok((Parse(ParseState::Identifier), Append))
+            Ok((Parse(Identifier), Append))
         } else if Self::is_char_start_numeric_literal(c) {
             Ok((
-                Parse(ParseState::NumericLiteral(NumericLiteralState::default())),
+                Parse(NumericLiteral(NumericLiteralState::default())),
                 Append,
             ))
         } else if Self::is_char_symbol(c) {
-            Ok((Parse(ParseState::Symbol), Append))
+            Ok((Parse(Symbol), Append))
         } else if Self::is_char_delimiter(c) {
-            Ok((Parse(ParseState::Whitespace), Append))
+            Ok((Parse(Whitespace), Append))
         } else {
             Err(())
         }
