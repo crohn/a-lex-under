@@ -28,12 +28,33 @@ enum State {
     End,
 }
 
+impl Default for State {
+    fn default() -> State {
+        State::Ready
+    }
+}
+
 #[derive(Debug)]
 enum ParseState {
     Identifier,
-    NumericLiteral { has_dot: bool, has_exp: bool },
+    NumericLiteral(NumericLiteralState),
     Symbol,
     Whitespace,
+}
+
+#[derive(Debug)]
+struct NumericLiteralState {
+    has_dot: bool,
+    has_exp: bool,
+}
+
+impl Default for NumericLiteralState {
+    fn default() -> NumericLiteralState {
+        NumericLiteralState {
+            has_dot: false,
+            has_exp: false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -78,17 +99,16 @@ impl<'a> Tokenizer<'a> {
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
         Tokenizer {
             scanner,
-            state: Ready,
+            state: State::default(),
             string_buffer: String::new(),
         }
     }
 
     fn emit_numeric_literal_or_error(
         &self,
-        has_dot: bool,
-        has_exp: bool,
+        num_lit_state: &NumericLiteralState,
     ) -> Result<(State, Action), ()> {
-        if has_dot || has_exp {
+        if num_lit_state.has_dot || num_lit_state.has_exp {
             if let Some(curr) = self.scanner.cursor().curr {
                 if curr.is_numeric() {
                     Ok((Complete(Token::NumericLiteral), EmitToken))
@@ -103,11 +123,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse(&self, parse_state: &ParseState) -> Result<(State, Action), ()> {
+    fn transition_from_parse(&self, parse_state: &mut ParseState) -> Result<(State, Action), ()> {
         match parse_state {
             ParseState::Identifier => self.transition_from_parse_identifier(),
-            ParseState::NumericLiteral { has_dot, has_exp } => {
-                self.transition_from_parse_numeric_literal(*has_dot, *has_exp)
+            ParseState::NumericLiteral(num_lit_state) => {
+                self.transition_from_parse_numeric_literal(num_lit_state)
             }
             ParseState::Whitespace => self.transition_from_parse_whitespace(),
             ParseState::Symbol => Ok((Complete(Token::Symbol), EmitToken)),
@@ -132,69 +152,57 @@ impl<'a> Tokenizer<'a> {
 
     fn transition_from_parse_numeric_literal(
         &self,
-        has_dot: bool,
-        has_exp: bool,
+        num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
         match self.scanner.cursor().next {
-            Some(DOT) => self.transition_from_parse_numeric_literal_dot(has_dot, has_exp),
+            Some(DOT) => self.transition_from_parse_numeric_literal_dot(num_lit_state),
             Some(UPPER_E) | Some(LOWER_E) => {
-                self.transition_from_parse_numeric_literal_exp(has_dot, has_exp)
+                self.transition_from_parse_numeric_literal_exp(num_lit_state)
             }
             Some(PLUS) | Some(HYPHEN) => {
-                self.transition_from_parse_numeric_literal_sign(has_dot, has_exp)
+                self.transition_from_parse_numeric_literal_sign(num_lit_state)
             }
 
-            Some(c) => self.transition_from_parse_numeric_literal_some(c, has_dot, has_exp),
-            None => self.emit_numeric_literal_or_error(has_dot, has_exp),
+            Some(c) => self.transition_from_parse_numeric_literal_some(c, num_lit_state),
+            None => self.emit_numeric_literal_or_error(num_lit_state),
         }
     }
 
     fn transition_from_parse_numeric_literal_dot(
         &self,
-        has_dot: bool,
-        has_exp: bool,
+        num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
-        if has_dot || has_exp {
+        if num_lit_state.has_dot || num_lit_state.has_exp {
             Err(())
         } else {
-            Ok((
-                Parse(ParseState::NumericLiteral {
-                    has_dot: true,
-                    has_exp,
-                }),
-                Append,
-            ))
+            let mut next = mem::take(num_lit_state);
+            next.has_dot = true;
+            Ok((Parse(ParseState::NumericLiteral(next)), Append))
         }
     }
 
     fn transition_from_parse_numeric_literal_exp(
         &self,
-        has_dot: bool,
-        has_exp: bool,
+        num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
-        if has_exp {
+        if num_lit_state.has_exp {
             Err(())
         } else {
-            Ok((
-                Parse(ParseState::NumericLiteral {
-                    has_dot,
-                    has_exp: true,
-                }),
-                Append,
-            ))
+            let mut next = mem::take(num_lit_state);
+            next.has_exp = true;
+            Ok((Parse(ParseState::NumericLiteral(next)), Append))
         }
     }
 
     fn transition_from_parse_numeric_literal_sign(
         &self,
-        has_dot: bool,
-        has_exp: bool,
+        num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
-        if has_exp && matches!(self.scanner.cursor().curr, Some(UPPER_E) | Some(LOWER_E)) {
-            Ok((
-                Parse(ParseState::NumericLiteral { has_dot, has_exp }),
-                Append,
-            ))
+        if num_lit_state.has_exp
+            && matches!(self.scanner.cursor().curr, Some(UPPER_E) | Some(LOWER_E))
+        {
+            let next = mem::take(num_lit_state);
+            Ok((Parse(ParseState::NumericLiteral(next)), Append))
         } else {
             Err(())
         }
@@ -203,16 +211,13 @@ impl<'a> Tokenizer<'a> {
     fn transition_from_parse_numeric_literal_some(
         &self,
         c: char,
-        has_dot: bool,
-        has_exp: bool,
+        num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), ()> {
         if Tokenizer::is_char_numeric_literal(c) {
-            Ok((
-                Parse(ParseState::NumericLiteral { has_dot, has_exp }),
-                Append,
-            ))
+            let next = mem::take(num_lit_state);
+            Ok((Parse(ParseState::NumericLiteral(next)), Append))
         } else if Tokenizer::is_char_delimiter(c) {
-            self.emit_numeric_literal_or_error(has_dot, has_exp)
+            self.emit_numeric_literal_or_error(num_lit_state)
         } else {
             Err(())
         }
@@ -239,10 +244,7 @@ impl<'a> Tokenizer<'a> {
             Ok((Parse(ParseState::Identifier), Append))
         } else if Self::is_char_start_numeric_literal(c) {
             Ok((
-                Parse(ParseState::NumericLiteral {
-                    has_dot: false,
-                    has_exp: false,
-                }),
+                Parse(ParseState::NumericLiteral(NumericLiteralState::default())),
                 Append,
             ))
         } else if Self::is_char_symbol(c) {
@@ -260,7 +262,9 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let result = match &self.state {
+            let mut curr_state = mem::take(&mut self.state);
+
+            let result = match &mut curr_state {
                 Ready => self.transition_from_ready(),
                 Parse(parse_state) => self.transition_from_parse(parse_state),
                 Complete(_) => Ok((Ready, Noop)),
