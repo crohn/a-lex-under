@@ -15,6 +15,18 @@ const UNDERSCORE: char = '_';
 const UPPER_E: char = 'E';
 
 #[derive(Debug)]
+pub enum CharClass {
+    Alphabetic,
+    Numeric,
+    Symbol,
+    SymbolIdentifier,
+    SymbolNumericLiteral,
+    Whitespace,
+    Invalid,
+    None,
+}
+
+#[derive(Debug)]
 enum Action {
     Append,
     EmitToken,
@@ -97,24 +109,23 @@ impl<'a> Tokenizer<'a> {
         c.is_whitespace()
     }
 
-    pub fn is_char_identifier(c: char) -> bool {
-        c == UNDERSCORE || c.is_alphanumeric()
-    }
-
-    pub fn is_char_start_identifier(c: char) -> bool {
-        c == UNDERSCORE || c.is_alphabetic()
-    }
-
     pub fn is_char_numeric_literal(c: char) -> bool {
         c == DOT || c == PLUS || c == HYPHEN || c == UPPER_E || c == LOWER_E || c.is_numeric()
     }
 
-    pub fn is_char_start_numeric_literal(c: char) -> bool {
-        c.is_numeric()
-    }
-
-    pub fn is_char_symbol(c: char) -> bool {
-        !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
+    pub fn classify_char(c: Option<char>) -> CharClass {
+        match c {
+            Some(UNDERSCORE) => CharClass::SymbolIdentifier,
+            Some(DOT) | Some(LOWER_E) | Some(UPPER_E) | Some(PLUS) | Some(HYPHEN) => {
+                CharClass::SymbolNumericLiteral
+            }
+            Some(c) if c.is_numeric() => CharClass::Numeric,
+            Some(c) if c.is_alphabetic() => CharClass::Alphabetic,
+            Some(c) if c.is_whitespace() => CharClass::Whitespace,
+            Some(c) if !c.is_control() => CharClass::Symbol,
+            Some(_) => CharClass::Invalid,
+            None => CharClass::None,
+        }
     }
 
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
@@ -156,18 +167,15 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn transition_from_parse_identifier(&self) -> Result<(State, Action), ()> {
-        let Some(c) = self.scanner.cursor().next else {
-            return Ok((Complete(Token::Identifier), EmitToken));
-        };
-
-        if Self::is_char_identifier(c) {
-            Ok((Parse(Identifier), Append))
-        } else if Self::is_char_delimiter(c) {
-            Ok((Complete(Token::Identifier), EmitToken))
-        } else if Self::is_char_symbol(c) {
-            Ok((Complete(Token::Identifier), EmitToken))
-        } else {
-            Err(())
+        match Self::classify_char(self.scanner.cursor().next) {
+            CharClass::Alphabetic | CharClass::Numeric | CharClass::SymbolIdentifier => {
+                Ok((Parse(Identifier), Append))
+            }
+            CharClass::SymbolNumericLiteral
+            | CharClass::Symbol
+            | CharClass::Whitespace
+            | CharClass::None => Ok((Complete(Token::Identifier), EmitToken)),
+            CharClass::Invalid => Err(()),
         }
     }
 
@@ -201,35 +209,23 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn transition_from_parse_whitespace(&self) -> Result<(State, Action), ()> {
-        let Some(c) = self.scanner.cursor().next else {
-            return Ok((Complete(Token::Whitespace), EmitToken));
-        };
-
-        if Self::is_char_delimiter(c) {
-            Ok((Parse(Whitespace), Append))
-        } else {
-            Ok((Complete(Token::Whitespace), EmitToken))
+        match Self::classify_char(self.scanner.cursor().next) {
+            CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
+            _ => Ok((Complete(Token::Whitespace), EmitToken)),
         }
     }
 
     fn transition_from_ready(&self) -> Result<(State, Action), ()> {
-        let Some(c) = self.scanner.cursor().next else {
-            return Ok((End, Noop));
-        };
-
-        if Self::is_char_start_identifier(c) {
-            Ok((Parse(Identifier), Append))
-        } else if Self::is_char_start_numeric_literal(c) {
-            Ok((
+        match Self::classify_char(self.scanner.cursor().next) {
+            CharClass::Alphabetic | CharClass::SymbolIdentifier => Ok((Parse(Identifier), Append)),
+            CharClass::Numeric => Ok((
                 Parse(NumericLiteral(NumericLiteralState::default())),
                 Append,
-            ))
-        } else if Self::is_char_symbol(c) {
-            Ok((Parse(Symbol), Append))
-        } else if Self::is_char_delimiter(c) {
-            Ok((Parse(Whitespace), Append))
-        } else {
-            Err(())
+            )),
+            CharClass::Symbol | CharClass::SymbolNumericLiteral => Ok((Parse(Symbol), Append)),
+            CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
+            CharClass::None => Ok((End, Noop)),
+            CharClass::Invalid => Err(()),
         }
     }
 }
