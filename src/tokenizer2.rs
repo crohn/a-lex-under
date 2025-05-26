@@ -1,5 +1,5 @@
 use crate::scanner::Scanner;
-use crate::tokenization;
+use crate::tokenization::{self, Action, CharClass, NumericLiteralState, ParseState, State, Token};
 use std::iter::Iterator;
 use std::mem;
 
@@ -13,90 +13,6 @@ const LOWER_E: char = 'e';
 const PLUS: char = '+';
 const UNDERSCORE: char = '_';
 const UPPER_E: char = 'E';
-
-#[derive(Debug)]
-pub enum CharClass {
-    Alphabetic,
-    Numeric,
-    Symbol,
-    SymbolIdentifier,
-    SymbolNumericLiteral,
-    Whitespace,
-    Invalid,
-    None,
-}
-
-#[derive(Debug)]
-enum Action {
-    Append,
-    EmitToken,
-    Noop,
-}
-
-#[derive(Debug)]
-enum State {
-    Ready,
-    Parse(ParseState),
-    Complete(fn(String) -> Token),
-    End,
-}
-
-impl Default for State {
-    fn default() -> State {
-        State::Ready
-    }
-}
-
-#[derive(Debug)]
-enum ParseState {
-    Identifier,
-    NumericLiteral(NumericLiteralState),
-    Symbol,
-    Whitespace,
-}
-
-#[derive(Debug)]
-struct NumericLiteralState {
-    has_dot: bool,
-    has_exp: bool,
-}
-
-impl Default for NumericLiteralState {
-    fn default() -> NumericLiteralState {
-        NumericLiteralState {
-            has_dot: false,
-            has_exp: false,
-        }
-    }
-}
-
-impl NumericLiteralState {
-    pub fn apply_dot(&mut self) -> Result<Self, ()> {
-        if self.has_dot || self.has_exp {
-            Err(())
-        } else {
-            self.has_dot = true;
-            Ok(mem::take(self))
-        }
-    }
-
-    pub fn apply_exp(&mut self) -> Result<Self, ()> {
-        if self.has_exp {
-            Err(())
-        } else {
-            self.has_exp = true;
-            Ok(mem::take(self))
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Token {
-    Identifier(String),
-    NumericLiteral(String),
-    Symbol(String),
-    Whitespace(String),
-}
 
 pub struct Tokenizer<'a> {
     scanner: Scanner<'a>,
@@ -128,7 +44,10 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse(&self, parse_state: &mut ParseState) -> Result<(State, Action), ()> {
+    fn transition_from_parse(
+        &mut self,
+        parse_state: &mut ParseState,
+    ) -> Result<(State, Action), tokenization::Error> {
         match parse_state {
             Identifier => self.transition_from_parse_identifier(),
             NumericLiteral(num_lit_state) => {
@@ -139,7 +58,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse_identifier(&self) -> Result<(State, Action), ()> {
+    fn transition_from_parse_identifier(&mut self) -> Result<(State, Action), tokenization::Error> {
         match Self::classify_char(self.scanner.cursor().next) {
             CharClass::Alphabetic | CharClass::Numeric | CharClass::SymbolIdentifier => {
                 Ok((Parse(Identifier), Append))
@@ -148,23 +67,23 @@ impl<'a> Tokenizer<'a> {
             | CharClass::Symbol
             | CharClass::Whitespace
             | CharClass::None => Ok((Complete(Token::Identifier), EmitToken)),
-            CharClass::Invalid => Err(()),
+            CharClass::Invalid => Err(self.error(Parse(Identifier))),
         }
     }
 
     fn transition_from_parse_numeric_literal(
-        &self,
+        &mut self,
         num_lit_state: &mut NumericLiteralState,
-    ) -> Result<(State, Action), ()> {
+    ) -> Result<(State, Action), tokenization::Error> {
         match (self.scanner.cursor().curr, self.scanner.cursor().next) {
-            (_, Some(DOT)) => {
-                let next = num_lit_state.apply_dot()?;
-                Ok((Parse(NumericLiteral(next)), Append))
-            }
-            (_, Some(UPPER_E) | Some(LOWER_E)) => {
-                let next = num_lit_state.apply_exp()?;
-                Ok((Parse(NumericLiteral(next)), Append))
-            }
+            (_, Some(DOT)) => num_lit_state.apply_dot().map_or_else(
+                |next| Err(self.error(Parse(NumericLiteral(next)))),
+                |next| Ok((Parse(NumericLiteral(next)), Append)),
+            ),
+            (_, Some(UPPER_E) | Some(LOWER_E)) => num_lit_state.apply_exp().map_or_else(
+                |next| Err(self.error(Parse(NumericLiteral(next)))),
+                |next| Ok((Parse(NumericLiteral(next)), Append)),
+            ),
             (Some(UPPER_E) | Some(LOWER_E), Some(PLUS) | Some(HYPHEN)) => {
                 let next = mem::take(num_lit_state);
                 Ok((Parse(NumericLiteral(next)), Append))
@@ -177,19 +96,19 @@ impl<'a> Tokenizer<'a> {
                     let next = mem::take(num_lit_state);
                     Ok((Parse(NumericLiteral(next)), Append))
                 }
-                _ => Err(()),
+                _ => Err(self.error(Parse(NumericLiteral(mem::take(num_lit_state))))),
             },
         }
     }
 
-    fn transition_from_parse_whitespace(&self) -> Result<(State, Action), ()> {
+    fn transition_from_parse_whitespace(&self) -> Result<(State, Action), tokenization::Error> {
         match Self::classify_char(self.scanner.cursor().next) {
             CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
             _ => Ok((Complete(Token::Whitespace), EmitToken)),
         }
     }
 
-    fn transition_from_ready(&self) -> Result<(State, Action), ()> {
+    fn transition_from_ready(&mut self) -> Result<(State, Action), tokenization::Error> {
         match Self::classify_char(self.scanner.cursor().next) {
             CharClass::Alphabetic | CharClass::SymbolIdentifier => Ok((Parse(Identifier), Append)),
             CharClass::Numeric => Ok((
@@ -199,7 +118,16 @@ impl<'a> Tokenizer<'a> {
             CharClass::Symbol | CharClass::SymbolNumericLiteral => Ok((Parse(Symbol), Append)),
             CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
             CharClass::None => Ok((End, Noop)),
-            CharClass::Invalid => Err(()),
+            CharClass::Invalid => Err(self.error(Ready)),
+        }
+    }
+
+    fn error(&mut self, state: State) -> tokenization::Error {
+        self.scanner.next();
+        tokenization::Error {
+            buffer: mem::take(&mut self.string_buffer),
+            cursor: self.scanner.cursor().clone(),
+            state,
         }
     }
 }
@@ -239,16 +167,10 @@ impl<'a> Iterator for Tokenizer<'a> {
                     self.state = next_state;
                     continue;
                 }
-                Err(()) => {
-                    self.state = Ready;
-                    self.scanner.next();
-
-                    let buffer = mem::take(&mut self.string_buffer);
-                    let error = Some(Err(tokenization::Error::InvalidCharacter {
-                        buffer,
-                        cursor: self.scanner.cursor().clone(),
-                    }));
-                    return error;
+                Err(error) => {
+                    // we can skip updating state here to save one cycle,
+                    // because of mem::take at the beginning of the loop
+                    return Some(Err(error));
                 }
             }
         }
@@ -287,9 +209,10 @@ mod test {
         assert_eq!(tokenize(""), vec![]);
         assert_eq!(
             tokenize("\u{18}"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::new(),
                 cursor: CursorBuilder::new().col(1).curr('\u{18}').build(),
+                state: Ready
             })]
         );
     }
@@ -315,9 +238,10 @@ mod test {
         );
         assert_eq!(
             tokenize("a\u{18}"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("a"),
-                cursor: CursorBuilder::new().col(2).prev('a').curr('\u{18}').build()
+                cursor: CursorBuilder::new().col(2).prev('a').curr('\u{18}').build(),
+                state: Parse(Identifier),
             })]
         );
     }
@@ -351,79 +275,119 @@ mod test {
         assert_eq!(
             tokenize("1\u{18}2"),
             vec![
-                Err(tokenization::Error::InvalidCharacter {
+                Err(tokenization::Error {
                     buffer: String::from("1"),
                     cursor: CursorBuilder::new()
                         .col(2)
                         .prev('1')
                         .curr('\u{18}')
                         .next('2')
-                        .build()
+                        .build(),
+                    state: Parse(NumericLiteral(NumericLiteralState {
+                        has_dot: false,
+                        has_exp: false
+                    })),
                 }),
                 numeric_literal("2")
             ]
         );
         assert_eq!(
             tokenize("12\u{18}"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("12"),
-                cursor: CursorBuilder::new().col(3).prev('2').curr('\u{18}').build()
+                cursor: CursorBuilder::new().col(3).prev('2').curr('\u{18}').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: false,
+                    has_exp: false
+                })),
             })]
         );
         assert_eq!(
             tokenize("1."),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1."),
-                cursor: CursorBuilder::new().col(2).prev('.').build()
+                cursor: CursorBuilder::new().col(2).prev('.').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: true,
+                    has_exp: false
+                })),
             })]
         );
         assert_eq!(
             tokenize("1. "),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1."),
-                cursor: CursorBuilder::new().col(3).prev('.').curr(' ').build()
+                cursor: CursorBuilder::new().col(3).prev('.').curr(' ').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: true,
+                    has_exp: false
+                })),
             })]
         );
         assert_eq!(
             tokenize("1.\u{18}"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1."),
-                cursor: CursorBuilder::new().col(3).prev('.').curr('\u{18}').build()
+                cursor: CursorBuilder::new().col(3).prev('.').curr('\u{18}').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: true,
+                    has_exp: false
+                })),
             })],
         );
         assert_eq!(
             tokenize("1.2."),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1.2"),
-                cursor: CursorBuilder::new().col(4).prev('2').curr('.').build()
+                cursor: CursorBuilder::new().col(4).prev('2').curr('.').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: true,
+                    has_exp: false
+                })),
             })]
         );
         assert_eq!(
             tokenize("1e"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1e"),
-                cursor: CursorBuilder::new().col(2).prev('e').build()
+                cursor: CursorBuilder::new().col(2).prev('e').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: false,
+                    has_exp: true
+                })),
             })]
         );
         assert_eq!(
             tokenize("1E"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1E"),
-                cursor: CursorBuilder::new().col(2).prev('E').build()
+                cursor: CursorBuilder::new().col(2).prev('E').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: false,
+                    has_exp: true
+                })),
             })]
         );
         assert_eq!(
             tokenize("1a"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("1"),
-                cursor: CursorBuilder::new().col(2).prev('1').curr('a').build()
+                cursor: CursorBuilder::new().col(2).prev('1').curr('a').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: false,
+                    has_exp: false
+                })),
             })]
         );
         assert_eq!(
             tokenize("11a"),
-            vec![Err(tokenization::Error::InvalidCharacter {
+            vec![Err(tokenization::Error {
                 buffer: String::from("11"),
-                cursor: CursorBuilder::new().col(3).prev('1').curr('a').build()
+                cursor: CursorBuilder::new().col(3).prev('1').curr('a').build(),
+                state: Parse(NumericLiteral(NumericLiteralState {
+                    has_dot: false,
+                    has_exp: false
+                })),
             })]
         );
     }
