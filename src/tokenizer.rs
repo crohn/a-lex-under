@@ -24,9 +24,7 @@ impl<'a> Tokenizer<'a> {
     pub fn classify_char(c: Option<char>) -> CharClass {
         match c {
             Some(UNDERSCORE) => CharClass::SymbolIdentifier,
-            Some(DOT) | Some(LOWER_E) | Some(UPPER_E) | Some(PLUS) | Some(HYPHEN) => {
-                CharClass::SymbolNumericLiteral
-            }
+            Some(DOT) | Some(PLUS) | Some(HYPHEN) => CharClass::SymbolNumericLiteral,
             Some(c) if c.is_numeric() => CharClass::Numeric,
             Some(c) if c.is_alphabetic() => CharClass::Alphabetic,
             Some(c) if c.is_whitespace() => CharClass::Whitespace,
@@ -236,6 +234,8 @@ mod test {
             tokenize("アキラ　_f1o"),
             vec![identifier("アキラ"), whitespace("　"), identifier("_f1o"),]
         );
+        assert_eq!(tokenize("mEme"), vec![identifier("mEme")]);
+
         assert_eq!(
             tokenize("a\u{18}"),
             vec![Err(tokenization::Error {
