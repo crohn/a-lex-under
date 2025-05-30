@@ -1,10 +1,45 @@
+const NEWLINE: char = '\n';
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cursor {
-    pub(crate) col: usize,
-    pub(crate) row: usize,
-    pub(crate) curr: Option<char>,
-    pub(crate) prev: Option<char>,
-    pub(crate) next: Option<char>,
+    col: usize,
+    row: usize,
+    prev: Option<char>,
+    curr: Option<char>,
+    next: Option<char>,
+}
+
+impl Cursor {
+    pub fn col(&self) -> usize {
+        self.col
+    }
+    pub fn row(&self) -> usize {
+        self.row
+    }
+    pub fn prev(&self) -> Option<char> {
+        self.prev
+    }
+    pub fn curr(&self) -> Option<char> {
+        self.curr
+    }
+    pub fn next(&self) -> Option<char> {
+        self.next
+    }
+
+    pub fn advance(&mut self, curr: Option<char>, next: Option<char>) -> Option<()> {
+        self.prev = self.curr;
+        self.curr = curr;
+        self.next = next;
+
+        if self.prev == Some(NEWLINE) {
+            self.row += 1;
+            self.col = 1;
+        } else if self.curr.is_some() {
+            self.col += 1;
+        }
+
+        self.curr.map(|_| ())
+    }
 }
 
 impl Default for Cursor {

@@ -1,8 +1,6 @@
-use crate::cursor::Cursor;
+use crate::cursor::{Cursor, CursorBuilder};
 use std::iter::{Iterator, Peekable};
 use std::str::Chars;
-
-const NEWLINE: char = '\n';
 
 #[derive(Debug)]
 pub struct Scanner<'a> {
@@ -13,8 +11,10 @@ pub struct Scanner<'a> {
 impl<'a> Scanner<'a> {
     pub fn new(input: &'a str) -> Scanner<'a> {
         let mut iterator = input.chars().peekable();
-        let mut cursor = Cursor::default();
-        cursor.next = iterator.peek().cloned();
+        let cursor = iterator.peek().cloned().map_or_else(
+            || CursorBuilder::new().build(),
+            |c| CursorBuilder::new().next(c).build(),
+        );
 
         Scanner { cursor, iterator }
     }
@@ -28,26 +28,9 @@ impl<'a> Iterator for Scanner<'a> {
     type Item = Cursor;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.cursor.prev = self.cursor.curr;
-
-        if let Some(curr) = self.iterator.next() {
-            self.cursor.curr = Some(curr);
-            self.cursor.next = self.iterator.peek().cloned();
-
-            if self.cursor.prev == Some(NEWLINE) {
-                self.cursor.row += 1;
-                self.cursor.col = 1;
-            } else {
-                self.cursor.col += 1;
-            }
-
-            Some(self.cursor)
-        } else {
-            self.cursor.curr = None;
-            self.cursor.next = None;
-
-            None
-        }
+        self.cursor
+            .advance(self.iterator.next(), self.iterator.peek().cloned())
+            .map(|()| self.cursor)
     }
 }
 

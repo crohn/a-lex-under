@@ -57,7 +57,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn transition_from_parse_identifier(&mut self) -> Result<(State, Action), tokenization::Error> {
-        match Self::classify_char(self.scanner.cursor().next) {
+        match Self::classify_char(self.scanner.cursor().next()) {
             CharClass::Alphabetic | CharClass::Numeric | CharClass::SymbolIdentifier => {
                 Ok((Parse(Identifier), Append))
             }
@@ -73,7 +73,7 @@ impl<'a> Tokenizer<'a> {
         &mut self,
         num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), tokenization::Error> {
-        match (self.scanner.cursor().curr, self.scanner.cursor().next) {
+        match (self.scanner.cursor().curr(), self.scanner.cursor().next()) {
             (_, Some(DOT)) => num_lit_state.apply_dot().map_or_else(
                 |next| Err(self.error(Parse(NumericLiteral(next)))),
                 |next| Ok((Parse(NumericLiteral(next)), Append)),
@@ -100,14 +100,14 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn transition_from_parse_whitespace(&self) -> Result<(State, Action), tokenization::Error> {
-        match Self::classify_char(self.scanner.cursor().next) {
+        match Self::classify_char(self.scanner.cursor().next()) {
             CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
             _ => Ok((Complete(Token::Whitespace), EmitToken)),
         }
     }
 
     fn transition_from_ready(&mut self) -> Result<(State, Action), tokenization::Error> {
-        match Self::classify_char(self.scanner.cursor().next) {
+        match Self::classify_char(self.scanner.cursor().next()) {
             CharClass::Alphabetic | CharClass::SymbolIdentifier => Ok((Parse(Identifier), Append)),
             CharClass::Numeric => Ok((
                 Parse(NumericLiteral(NumericLiteralState::default())),
@@ -149,7 +149,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                     self.state = next_state;
 
                     if let Some(cursor) = self.scanner.next() {
-                        if let Some(c) = cursor.curr {
+                        if let Some(c) = cursor.curr() {
                             self.string_buffer.push(c);
                         }
                     }
