@@ -26,10 +26,10 @@ impl Cursor {
         self.next
     }
 
-    pub fn advance(&mut self, curr: Option<char>, next: Option<char>) -> Option<()> {
+    pub fn advance(&mut self, curr: Option<char>, next: Option<&char>) -> Option<()> {
         self.prev = self.curr;
         self.curr = curr;
-        self.next = next;
+        self.next = next.copied();
 
         if self.prev == Some(NEWLINE) {
             self.row += 1;

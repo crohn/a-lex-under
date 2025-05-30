@@ -29,7 +29,7 @@ impl<'a> Iterator for Scanner<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.cursor
-            .advance(self.iterator.next(), self.iterator.peek().cloned())
+            .advance(self.iterator.next(), self.iterator.peek())
             .map(|()| self.cursor)
     }
 }
