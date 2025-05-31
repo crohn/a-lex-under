@@ -1,19 +1,8 @@
+pub mod char_class;
 pub mod error;
 pub mod num_lit_state;
 
 use num_lit_state::NumericLiteralState;
-
-#[derive(Debug)]
-pub enum CharClass {
-    Alphabetic,
-    Numeric,
-    Symbol,
-    SymbolIdentifier,
-    SymbolNumericLiteral,
-    Whitespace,
-    Invalid,
-    None,
-}
 
 #[derive(Debug)]
 pub enum Action {

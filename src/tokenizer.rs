@@ -1,20 +1,14 @@
 use crate::scanner::Scanner;
+use crate::tokenization::char_class::{CharClass, DOT, HYPHEN, LOWER_E, PLUS, UPPER_E};
 use crate::tokenization::error::{Error, ErrorKind};
 use crate::tokenization::num_lit_state::NumericLiteralState;
-use crate::tokenization::{Action, CharClass, ParseState, State, Token};
+use crate::tokenization::{Action, ParseState, State, Token};
 use std::iter::Iterator;
 use std::mem;
 
 use Action::*;
 use ParseState::*;
 use State::*;
-
-const DOT: char = '.';
-const HYPHEN: char = '-';
-const LOWER_E: char = 'e';
-const PLUS: char = '+';
-const UNDERSCORE: char = '_';
-const UPPER_E: char = 'E';
 
 pub struct Tokenizer<'a> {
     scanner: Scanner<'a>,
@@ -23,19 +17,6 @@ pub struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn classify_char(c: Option<char>) -> CharClass {
-        match c {
-            Some(UNDERSCORE) => CharClass::SymbolIdentifier,
-            Some(DOT) | Some(PLUS) | Some(HYPHEN) => CharClass::SymbolNumericLiteral,
-            Some(c) if c.is_numeric() => CharClass::Numeric,
-            Some(c) if c.is_alphabetic() => CharClass::Alphabetic,
-            Some(c) if c.is_whitespace() => CharClass::Whitespace,
-            Some(c) if !c.is_control() => CharClass::Symbol,
-            Some(_) => CharClass::Invalid,
-            None => CharClass::None,
-        }
-    }
-
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
         Tokenizer {
             scanner,
@@ -59,7 +40,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn transition_from_parse_identifier(&mut self) -> Result<(State, Action), (State, ErrorKind)> {
-        match Self::classify_char(self.scanner.cursor().next()) {
+        match CharClass::classify(self.scanner.cursor().next()) {
             CharClass::Alphabetic | CharClass::Numeric | CharClass::SymbolIdentifier => {
                 Ok((Parse(Identifier), Append))
             }
@@ -88,7 +69,7 @@ impl<'a> Tokenizer<'a> {
                 let next = mem::take(num_lit_state);
                 Ok((Parse(NumericLiteral(next)), Append))
             }
-            (curr, next) => match (Self::classify_char(curr), Self::classify_char(next)) {
+            (curr, next) => match (CharClass::classify(curr), CharClass::classify(next)) {
                 (CharClass::Numeric, CharClass::Whitespace | CharClass::None) => {
                     Ok((Complete(Token::NumericLiteral), EmitToken))
                 }
@@ -105,14 +86,14 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn transition_from_parse_whitespace(&self) -> Result<(State, Action), (State, ErrorKind)> {
-        match Self::classify_char(self.scanner.cursor().next()) {
+        match CharClass::classify(self.scanner.cursor().next()) {
             CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
             _ => Ok((Complete(Token::Whitespace), EmitToken)),
         }
     }
 
     fn transition_from_ready(&mut self) -> Result<(State, Action), (State, ErrorKind)> {
-        match Self::classify_char(self.scanner.cursor().next()) {
+        match CharClass::classify(self.scanner.cursor().next()) {
             CharClass::Alphabetic | CharClass::SymbolIdentifier => Ok((Parse(Identifier), Append)),
             CharClass::Numeric => Ok((
                 Parse(NumericLiteral(NumericLiteralState::default())),
