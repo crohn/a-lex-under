@@ -1,14 +1,18 @@
 pub mod char_class;
 pub mod error;
 pub mod num_lit_state;
+pub mod str_lit_state;
 
 use num_lit_state::NumericLiteralState;
+use str_lit_state::StringLiteralState;
 
 #[derive(Debug)]
 pub enum Action {
     Append,
     EmitToken,
     Noop,
+    Pop,
+    Push,
 }
 
 #[derive(Debug, PartialEq)]
@@ -29,6 +33,7 @@ impl Default for State {
 pub enum ParseState {
     Identifier,
     NumericLiteral(NumericLiteralState),
+    StringLiteral(StringLiteralState),
     Symbol,
     Whitespace,
 }
@@ -37,6 +42,7 @@ pub enum ParseState {
 pub enum Token {
     Identifier(String),
     NumericLiteral(String),
+    StringLiteral(String),
     Symbol(String),
     Whitespace(String),
 }
