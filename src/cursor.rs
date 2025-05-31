@@ -26,7 +26,7 @@ impl Cursor {
         self.next
     }
 
-    pub fn advance(&mut self, curr: Option<char>, next: Option<&char>) -> Option<()> {
+    pub fn step(&mut self, curr: Option<char>, next: Option<&char>) -> Option<()> {
         self.prev = self.curr;
         self.curr = curr;
         self.next = next.copied();
@@ -79,27 +79,27 @@ impl CursorBuilder {
         CursorBuilder::default()
     }
 
-    pub fn row(mut self, row: usize) -> CursorBuilder {
+    pub fn row(mut self, row: usize) -> Self {
         self.row = row;
         self
     }
 
-    pub fn col(mut self, col: usize) -> CursorBuilder {
+    pub fn col(mut self, col: usize) -> Self {
         self.col = col;
         self
     }
 
-    pub fn prev(mut self, prev: char) -> CursorBuilder {
+    pub fn prev(mut self, prev: char) -> Self {
         self.prev = Some(prev);
         self
     }
 
-    pub fn curr(mut self, curr: char) -> CursorBuilder {
+    pub fn curr(mut self, curr: char) -> Self {
         self.curr = Some(curr);
         self
     }
 
-    pub fn next(mut self, next: char) -> CursorBuilder {
+    pub fn next(mut self, next: char) -> Self {
         self.next = Some(next);
         self
     }

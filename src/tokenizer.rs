@@ -1,5 +1,6 @@
 use crate::scanner::Scanner;
-use crate::tokenization::{self, Action, CharClass, NumericLiteralState, ParseState, State, Token};
+use crate::tokenization::num_lit_state::NumericLiteralState;
+use crate::tokenization::{self, Action, CharClass, ParseState, State, Token};
 use std::iter::Iterator;
 use std::mem;
 
@@ -177,7 +178,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::cursor::CursorBuilder;
+    use crate::{cursor::CursorBuilder, tokenization::num_lit_state::NumericLiteralStateBuilder};
 
     use super::*;
 
@@ -283,10 +284,7 @@ mod test {
                         .curr('\u{18}')
                         .next('2')
                         .build(),
-                    state: Parse(NumericLiteral(NumericLiteralState {
-                        has_dot: false,
-                        has_exp: false
-                    })),
+                    state: Parse(NumericLiteral(NumericLiteralStateBuilder::new().build())),
                 }),
                 numeric_literal("2")
             ]
@@ -296,10 +294,7 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("12"),
                 cursor: CursorBuilder::new().col(3).prev('2').curr('\u{18}').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: false,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(NumericLiteralStateBuilder::new().build())),
             })]
         );
         assert_eq!(
@@ -307,10 +302,9 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1."),
                 cursor: CursorBuilder::new().col(2).prev('.').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: true,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(
+                    NumericLiteralStateBuilder::new().has_dot().build()
+                )),
             })]
         );
         assert_eq!(
@@ -318,10 +312,9 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1."),
                 cursor: CursorBuilder::new().col(3).prev('.').curr(' ').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: true,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(
+                    NumericLiteralStateBuilder::new().has_dot().build()
+                )),
             })]
         );
         assert_eq!(
@@ -329,10 +322,9 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1."),
                 cursor: CursorBuilder::new().col(3).prev('.').curr('\u{18}').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: true,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(
+                    NumericLiteralStateBuilder::new().has_dot().build()
+                )),
             })],
         );
         assert_eq!(
@@ -340,10 +332,9 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1.2"),
                 cursor: CursorBuilder::new().col(4).prev('2').curr('.').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: true,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(
+                    NumericLiteralStateBuilder::new().has_dot().build()
+                )),
             })]
         );
         assert_eq!(
@@ -351,10 +342,9 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1e"),
                 cursor: CursorBuilder::new().col(2).prev('e').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: false,
-                    has_exp: true
-                })),
+                state: Parse(NumericLiteral(
+                    NumericLiteralStateBuilder::new().has_exp().build()
+                )),
             })]
         );
         assert_eq!(
@@ -362,10 +352,9 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1E"),
                 cursor: CursorBuilder::new().col(2).prev('E').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: false,
-                    has_exp: true
-                })),
+                state: Parse(NumericLiteral(
+                    NumericLiteralStateBuilder::new().has_exp().build()
+                )),
             })]
         );
         assert_eq!(
@@ -373,10 +362,7 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("1"),
                 cursor: CursorBuilder::new().col(2).prev('1').curr('a').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: false,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(NumericLiteralStateBuilder::new().build())),
             })]
         );
         assert_eq!(
@@ -384,10 +370,7 @@ mod test {
             vec![Err(tokenization::Error {
                 buffer: String::from("11"),
                 cursor: CursorBuilder::new().col(3).prev('1').curr('a').build(),
-                state: Parse(NumericLiteral(NumericLiteralState {
-                    has_dot: false,
-                    has_exp: false
-                })),
+                state: Parse(NumericLiteral(NumericLiteralStateBuilder::new().build())),
             })]
         );
     }

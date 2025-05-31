@@ -1,5 +1,7 @@
+pub mod num_lit_state;
+
 use crate::cursor::Cursor;
-use std::mem;
+use num_lit_state::NumericLiteralState;
 
 #[derive(Debug, PartialEq)]
 pub struct Error {
@@ -47,41 +49,6 @@ pub enum ParseState {
     NumericLiteral(NumericLiteralState),
     Symbol,
     Whitespace,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct NumericLiteralState {
-    pub(crate) has_dot: bool,
-    pub(crate) has_exp: bool,
-}
-
-impl Default for NumericLiteralState {
-    fn default() -> NumericLiteralState {
-        NumericLiteralState {
-            has_dot: false,
-            has_exp: false,
-        }
-    }
-}
-
-impl NumericLiteralState {
-    pub fn apply_dot(&mut self) -> Result<Self, Self> {
-        if self.has_dot || self.has_exp {
-            Err(mem::take(self))
-        } else {
-            self.has_dot = true;
-            Ok(mem::take(self))
-        }
-    }
-
-    pub fn apply_exp(&mut self) -> Result<Self, Self> {
-        if self.has_exp {
-            Err(mem::take(self))
-        } else {
-            self.has_exp = true;
-            Ok(mem::take(self))
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]
