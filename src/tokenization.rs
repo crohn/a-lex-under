@@ -1,14 +1,7 @@
+pub mod error;
 pub mod num_lit_state;
 
-use crate::cursor::Cursor;
 use num_lit_state::NumericLiteralState;
-
-#[derive(Debug, PartialEq)]
-pub struct Error {
-    pub(crate) buffer: String,
-    pub(crate) cursor: Cursor,
-    pub(crate) state: State,
-}
 
 #[derive(Debug)]
 pub enum CharClass {
