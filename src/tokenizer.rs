@@ -1,7 +1,5 @@
 use crate::scanner::Scanner;
-use crate::tokenization::char_class::{
-    CharClass, DOT, DOUBLE_QUOTE, HYPHEN, LOWER_E, PLUS, UPPER_E,
-};
+use crate::tokenization::char_class::{BACKSLASH, CharClass, DOT, HYPHEN, LOWER_E, PLUS, UPPER_E};
 use crate::tokenization::error::{Error, ErrorKind};
 use crate::tokenization::num_lit_state::NumericLiteralState;
 use crate::tokenization::str_lit_state::StringLiteralState;
@@ -47,12 +45,12 @@ impl<'a> Tokenizer<'a> {
 
     fn transition_from_parse_identifier(&mut self) -> Result<(State, Action), (State, ErrorKind)> {
         match CharClass::classify(self.scanner.cursor().next()) {
-            CharClass::Alphabetic | CharClass::Numeric | CharClass::SymbolIdentifier => {
-                Ok((Parse(Identifier), Append))
+            CharClass::Alphabetic(c) | CharClass::Numeric(c) | CharClass::SymbolIdentifier(c) => {
+                Ok((Parse(Identifier), Append(c)))
             }
-            CharClass::SymbolNumericLiteral
-            | CharClass::Symbol
-            | CharClass::Whitespace
+            CharClass::SymbolNumericLiteral(_)
+            | CharClass::Symbol(_)
+            | CharClass::Whitespace(_)
             | CharClass::None => Ok((Complete(Token::Identifier), EmitToken)),
             CharClass::Invalid | CharClass::SymbolStringLiteral => {
                 Err((Parse(Identifier), ErrorKind::Invalid))
@@ -67,23 +65,21 @@ impl<'a> Tokenizer<'a> {
         match (self.scanner.cursor().curr(), self.scanner.cursor().next()) {
             (_, Some(DOT)) => num_lit_state.apply_dot().map_or_else(
                 |next| Err((Parse(NumericLiteral(next)), ErrorKind::Invalid)),
-                |next| Ok((Parse(NumericLiteral(next)), Append)),
+                |next| Ok((Parse(NumericLiteral(next)), Append(DOT))),
             ),
-            (_, Some(UPPER_E) | Some(LOWER_E)) => num_lit_state.apply_exp().map_or_else(
+            (_, Some(c @ (LOWER_E | UPPER_E))) => num_lit_state.apply_exp().map_or_else(
                 |next| Err((Parse(NumericLiteral(next)), ErrorKind::Invalid)),
-                |next| Ok((Parse(NumericLiteral(next)), Append)),
+                |next| Ok((Parse(NumericLiteral(next)), Append(c))),
             ),
-            (Some(UPPER_E) | Some(LOWER_E), Some(PLUS) | Some(HYPHEN)) => {
-                let next = mem::take(num_lit_state);
-                Ok((Parse(NumericLiteral(next)), Append))
+            (Some(UPPER_E) | Some(LOWER_E), Some(c @ (PLUS | HYPHEN))) => {
+                Ok((Parse(NumericLiteral(mem::take(num_lit_state))), Append(c)))
             }
             (curr, next) => match (CharClass::classify(curr), CharClass::classify(next)) {
-                (CharClass::Numeric, CharClass::Whitespace | CharClass::None) => {
+                (CharClass::Numeric(_), CharClass::Whitespace(_) | CharClass::None) => {
                     Ok((Complete(Token::NumericLiteral), EmitToken))
                 }
-                (_, CharClass::Numeric | CharClass::SymbolNumericLiteral) => {
-                    let next = mem::take(num_lit_state);
-                    Ok((Parse(NumericLiteral(next)), Append))
+                (_, CharClass::Numeric(c) | CharClass::SymbolNumericLiteral(c)) => {
+                    Ok((Parse(NumericLiteral(mem::take(num_lit_state))), Append(c)))
                 }
                 _ => Err((
                     Parse(NumericLiteral(mem::take(num_lit_state))),
@@ -97,37 +93,75 @@ impl<'a> Tokenizer<'a> {
         &self,
         str_lit_state: &mut StringLiteralState,
     ) -> Result<(State, Action), (State, ErrorKind)> {
-        match self.scanner.cursor().next() {
-            Some(DOUBLE_QUOTE) => Ok((Complete(Token::StringLiteral), Pop)),
-            c => match CharClass::classify(c) {
+        match (str_lit_state.escape, self.scanner.cursor().next()) {
+            (false, Some(BACKSLASH)) => {
+                str_lit_state.escape = true;
+                Ok((Parse(StringLiteral(mem::take(str_lit_state))), Push))
+            }
+            // FIXMEshould be valid
+            (false, c) => match CharClass::classify(c) {
+                CharClass::None => Err((
+                    Parse(StringLiteral(mem::take(str_lit_state))),
+                    ErrorKind::EndOfInput,
+                )),
                 CharClass::Invalid => Err((
                     Parse(StringLiteral(mem::take(str_lit_state))),
                     ErrorKind::Invalid,
                 )),
-                _ => Ok((Parse(StringLiteral(mem::take(str_lit_state))), Append)),
+                CharClass::SymbolStringLiteral => Ok((Complete(Token::StringLiteral), Pop)),
+                CharClass::Alphabetic(c)
+                | CharClass::Numeric(c)
+                | CharClass::Symbol(c)
+                | CharClass::SymbolIdentifier(c)
+                | CharClass::SymbolNumericLiteral(c)
+                | CharClass::Whitespace(c) => {
+                    Ok((Parse(StringLiteral(mem::take(str_lit_state))), Append(c)))
+                }
             },
+            (true, None) => Err((
+                Parse(StringLiteral(mem::take(str_lit_state))),
+                ErrorKind::EndOfInput,
+            )),
+            (true, Some(c)) => str_lit_state.to_escaped(c).map_or_else(
+                |()| {
+                    Err((
+                        Parse(StringLiteral(StringLiteralState::default())),
+                        ErrorKind::Escape,
+                    ))
+                },
+                |c| {
+                    Ok((
+                        Parse(StringLiteral(StringLiteralState::default())),
+                        Append(c),
+                    ))
+                },
+            ),
         }
     }
 
     fn transition_from_parse_whitespace(&self) -> Result<(State, Action), (State, ErrorKind)> {
         match CharClass::classify(self.scanner.cursor().next()) {
-            CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
+            CharClass::Whitespace(c) => Ok((Parse(Whitespace), Append(c))),
             _ => Ok((Complete(Token::Whitespace), EmitToken)),
         }
     }
 
     fn transition_from_ready(&mut self) -> Result<(State, Action), (State, ErrorKind)> {
         match CharClass::classify(self.scanner.cursor().next()) {
-            CharClass::Alphabetic | CharClass::SymbolIdentifier => Ok((Parse(Identifier), Append)),
-            CharClass::Numeric => Ok((
+            CharClass::Alphabetic(c) | CharClass::SymbolIdentifier(c) => {
+                Ok((Parse(Identifier), Append(c)))
+            }
+            CharClass::Numeric(c) => Ok((
                 Parse(NumericLiteral(NumericLiteralState::default())),
-                Append,
+                Append(c),
             )),
             CharClass::SymbolStringLiteral => {
                 Ok((Parse(StringLiteral(StringLiteralState::default())), Push))
             }
-            CharClass::Symbol | CharClass::SymbolNumericLiteral => Ok((Parse(Symbol), Append)),
-            CharClass::Whitespace => Ok((Parse(Whitespace), Append)),
+            CharClass::Symbol(c) | CharClass::SymbolNumericLiteral(c) => {
+                Ok((Parse(Symbol), Append(c)))
+            }
+            CharClass::Whitespace(c) => Ok((Parse(Whitespace), Append(c))),
             CharClass::None => Ok((End, Noop)),
             CharClass::Invalid => Err((Ready, ErrorKind::Invalid)),
         }
@@ -149,12 +183,10 @@ impl<'a> Iterator for Tokenizer<'a> {
             };
 
             match result {
-                Ok((next_state, Append)) => {
+                Ok((next_state, Append(c))) => {
                     self.state = next_state;
-                    self.scanner
-                        .next()
-                        .and_then(|cursor| cursor.curr())
-                        .map(|c| self.string_buffer.push(c));
+                    self.scanner.next();
+                    self.string_buffer.push(c);
                 }
                 Ok((next_state, EmitToken)) => {
                     if let Complete(emitter) = next_state {
@@ -409,6 +441,11 @@ mod test {
         assert_eq!(
             tokenize("\"hello world\""),
             vec![string_literal("hello world")]
+        );
+
+        assert_eq!(
+            tokenize("\"hello \\\"\\n world\""),
+            vec![string_literal("hello \"\n world")]
         );
     }
 }

@@ -1,3 +1,4 @@
+pub const BACKSLASH: char = '\\';
 pub const DOT: char = '.';
 pub const DOUBLE_QUOTE: char = '"';
 pub const HYPHEN: char = '-';
@@ -8,13 +9,13 @@ pub const UPPER_E: char = 'E';
 
 #[derive(Debug)]
 pub enum CharClass {
-    Alphabetic,
-    Numeric,
-    Symbol,
-    SymbolIdentifier,
-    SymbolNumericLiteral,
+    Alphabetic(char),
+    Numeric(char),
+    Symbol(char),
+    SymbolIdentifier(char),
+    SymbolNumericLiteral(char),
     SymbolStringLiteral,
-    Whitespace,
+    Whitespace(char),
     Invalid,
     None,
 }
@@ -22,13 +23,15 @@ pub enum CharClass {
 impl CharClass {
     pub fn classify(c: Option<char>) -> CharClass {
         match c {
-            Some(UNDERSCORE) => CharClass::SymbolIdentifier,
-            Some(DOT) | Some(PLUS) | Some(HYPHEN) => CharClass::SymbolNumericLiteral,
+            Some(UNDERSCORE) => CharClass::SymbolIdentifier(UNDERSCORE),
+            Some(DOT) => CharClass::SymbolNumericLiteral(DOT),
+            Some(PLUS) => CharClass::SymbolNumericLiteral(PLUS),
+            Some(HYPHEN) => CharClass::SymbolNumericLiteral(HYPHEN),
             Some(DOUBLE_QUOTE) => CharClass::SymbolStringLiteral,
-            Some(c) if c.is_numeric() => CharClass::Numeric,
-            Some(c) if c.is_alphabetic() => CharClass::Alphabetic,
-            Some(c) if c.is_whitespace() => CharClass::Whitespace,
-            Some(c) if !c.is_control() => CharClass::Symbol,
+            Some(c) if c.is_numeric() => CharClass::Numeric(c),
+            Some(c) if c.is_alphabetic() => CharClass::Alphabetic(c),
+            Some(c) if c.is_whitespace() => CharClass::Whitespace(c),
+            Some(c) if !c.is_control() => CharClass::Symbol(c),
             Some(_) => CharClass::Invalid,
             None => CharClass::None,
         }

@@ -8,7 +8,7 @@ use str_lit_state::StringLiteralState;
 
 #[derive(Debug)]
 pub enum Action {
-    Append,
+    Append(char),
     EmitToken,
     Noop,
     Pop,
