@@ -65,12 +65,11 @@ impl<'a> Tokenizer<'a> {
                 Ok((Parse(Identifier), Append(c)))
             }
             CharClass::SymbolNumericLiteral(_)
+            | CharClass::SymbolStringLiteral(_)
             | CharClass::Symbol(_)
             | CharClass::Whitespace(_)
             | CharClass::None => Ok((Complete(Token::Identifier), Noop)),
-            CharClass::Invalid | CharClass::SymbolStringLiteral(_) => {
-                Err((Parse(Identifier), ErrorKind::Invalid))
-            }
+            CharClass::Invalid => Err((Parse(Identifier), ErrorKind::Invalid)),
         }
     }
 
@@ -319,6 +318,11 @@ mod test {
             vec![identifier("アキラ"), whitespace("　"), identifier("_f1o"),]
         );
         assert_eq!(tokenize("mEme"), vec![identifier("mEme")]);
+
+        assert_eq!(
+            tokenize("m\"Eme\""),
+            vec![identifier("m"), string_literal("Eme")]
+        );
 
         assert_eq!(
             tokenize("a\u{18}"),
