@@ -26,4 +26,5 @@ pub enum ErrorKind {
     EndOfInput,
     Escape,
     Invalid,
+    Unbalance,
 }

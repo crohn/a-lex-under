@@ -8,10 +8,11 @@ use str_lit_state::StringLiteralState;
 
 #[derive(Debug, PartialEq)]
 pub enum Action {
-    Append(char),
-    Noop,
-    Pop,
-    Push,
+    Noop,         // state
+    Skip,         // state, scan
+    Append(char), // state, scan, buffer
+    Pop(char),    // state, scan, stack
+    Push(char),   // state, scan, stack
 }
 
 #[derive(Debug, PartialEq)]

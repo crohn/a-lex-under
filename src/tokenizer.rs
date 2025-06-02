@@ -13,6 +13,7 @@ use State::*;
 
 pub struct Tokenizer<'a> {
     scanner: Scanner<'a>,
+    stack: Vec<char>,
     state: State,
     string_buffer: String,
 }
@@ -21,6 +22,7 @@ impl<'a> Tokenizer<'a> {
     pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
         Tokenizer {
             scanner,
+            stack: Vec::new(),
             state: State::default(),
             string_buffer: String::new(),
         }
@@ -65,7 +67,7 @@ impl<'a> Tokenizer<'a> {
             | CharClass::Symbol(_)
             | CharClass::Whitespace(_)
             | CharClass::None => Ok((Complete(Token::Identifier), Noop)),
-            CharClass::Invalid | CharClass::SymbolStringLiteral => {
+            CharClass::Invalid | CharClass::SymbolStringLiteral(_) => {
                 Err((Parse(Identifier), ErrorKind::Invalid))
             }
         }
@@ -109,7 +111,7 @@ impl<'a> Tokenizer<'a> {
         match (str_lit_state.escape, self.scanner.cursor().next()) {
             (false, Some(BACKSLASH)) => {
                 str_lit_state.escape = true;
-                Ok((Parse(StringLiteral(mem::take(str_lit_state))), Push))
+                Ok((Parse(StringLiteral(mem::take(str_lit_state))), Skip))
             }
             (false, c) => match CharClass::classify(c) {
                 CharClass::None => Err((
@@ -120,7 +122,7 @@ impl<'a> Tokenizer<'a> {
                     Parse(StringLiteral(mem::take(str_lit_state))),
                     ErrorKind::Invalid,
                 )),
-                CharClass::SymbolStringLiteral => Ok((Complete(Token::StringLiteral), Pop)),
+                CharClass::SymbolStringLiteral(c) => Ok((Complete(Token::StringLiteral), Pop(c))),
                 CharClass::Alphabetic(c)
                 | CharClass::Numeric(c)
                 | CharClass::Symbol(c)
@@ -168,8 +170,8 @@ impl<'a> Tokenizer<'a> {
                 Parse(NumericLiteral(NumericLiteralState::default())),
                 Append(c),
             )),
-            CharClass::SymbolStringLiteral => {
-                Ok((Parse(StringLiteral(StringLiteralState::default())), Push))
+            CharClass::SymbolStringLiteral(c) => {
+                Ok((Parse(StringLiteral(StringLiteralState::default())), Push(c)))
             }
             CharClass::Symbol(c) | CharClass::SymbolNumericLiteral(c) => {
                 Ok((Parse(Symbol), Append(c)))
@@ -201,15 +203,21 @@ impl<'a> Iterator for Tokenizer<'a> {
             }
 
             if let Ok((next_state, action)) = result {
-                self.state = next_state;
-
                 if action != Noop {
                     self.scanner.next();
                 }
 
                 if let Append(c) = action {
                     self.string_buffer.push(c);
+                } else if let Push(c) = action {
+                    self.stack.push(c);
+                } else if let Pop(c) = action {
+                    if !CharClass::is_balanced(self.stack.pop(), c) {
+                        return Some(Err(self.error(ErrorKind::Unbalance, next_state)));
+                    }
                 }
+
+                self.state = next_state;
             }
 
             if let Complete(emitter) = self.state {
