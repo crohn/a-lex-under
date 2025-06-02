@@ -221,14 +221,15 @@ impl<'a> Iterator for Tokenizer<'a> {
                     self.scanner.next();
                 }
 
-                if let Append(c) = action {
-                    self.string_buffer.push(c);
-                } else if let Push(c) = action {
-                    self.stack.push(c);
-                } else if let Pop(c) = action {
-                    if !CharClass::is_balanced(self.stack.pop(), c) {
-                        return Some(Err(self.error(ErrorKind::Unbalance, next_state)));
+                match action {
+                    Append(c) => self.string_buffer.push(c),
+                    Push(c) => self.stack.push(c),
+                    Pop(c) => {
+                        if !CharClass::is_balanced(self.stack.pop(), c) {
+                            return Some(Err(self.error(ErrorKind::Unbalance, next_state)));
+                        }
                     }
+                    Skip | Noop => {}
                 }
 
                 self.state = next_state;
