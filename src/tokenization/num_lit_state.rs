@@ -6,6 +6,15 @@ pub struct NumericLiteralState {
     has_exp: bool,
 }
 
+impl Default for NumericLiteralState {
+    fn default() -> Self {
+        Self {
+            has_dot: false,
+            has_exp: false,
+        }
+    }
+}
+
 impl NumericLiteralState {
     pub fn apply_dot(&mut self) -> Result<Self, Self> {
         if self.has_dot || self.has_exp {
@@ -26,23 +35,14 @@ impl NumericLiteralState {
     }
 }
 
-impl Default for NumericLiteralState {
-    fn default() -> NumericLiteralState {
-        NumericLiteralState {
-            has_dot: false,
-            has_exp: false,
-        }
-    }
-}
-
 pub struct NumericLiteralStateBuilder {
     has_dot: bool,
     has_exp: bool,
 }
 
 impl NumericLiteralStateBuilder {
-    pub fn new() -> NumericLiteralStateBuilder {
-        NumericLiteralStateBuilder {
+    pub fn new() -> Self {
+        Self {
             has_dot: false,
             has_exp: false,
         }

@@ -9,6 +9,18 @@ pub struct Cursor {
     next: Option<char>,
 }
 
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            col: 0,
+            row: 1,
+            prev: None,
+            curr: None,
+            next: None,
+        }
+    }
+}
+
 impl Cursor {
     pub fn col(&self) -> usize {
         self.col
@@ -42,18 +54,6 @@ impl Cursor {
     }
 }
 
-impl Default for Cursor {
-    fn default() -> Cursor {
-        Cursor {
-            col: 0,
-            row: 1,
-            prev: None,
-            curr: None,
-            next: None,
-        }
-    }
-}
-
 pub struct CursorBuilder {
     row: usize,
     col: usize,
@@ -63,8 +63,8 @@ pub struct CursorBuilder {
 }
 
 impl Default for CursorBuilder {
-    fn default() -> CursorBuilder {
-        CursorBuilder {
+    fn default() -> Self {
+        Self {
             col: 0,
             row: 1,
             prev: None,
@@ -75,8 +75,8 @@ impl Default for CursorBuilder {
 }
 
 impl CursorBuilder {
-    pub fn new() -> CursorBuilder {
-        CursorBuilder::default()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn row(mut self, row: usize) -> Self {

@@ -1,6 +1,14 @@
+use super::State;
 use crate::cursor::Cursor;
 
-use super::State;
+#[derive(Debug, PartialEq)]
+pub enum ErrorKind {
+    Codepoint,
+    EndOfInput,
+    Escape,
+    Invalid,
+    Unbalance,
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Error {
@@ -11,21 +19,12 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn new(kind: ErrorKind, state: State, buffer: String, cursor: Cursor) -> Error {
-        Error {
+    pub fn new(kind: ErrorKind, state: State, buffer: String, cursor: Cursor) -> Self {
+        Self {
             buffer,
             cursor,
             kind,
             state,
         }
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum ErrorKind {
-    Codepoint,
-    EndOfInput,
-    Escape,
-    Invalid,
-    Unbalance,
 }

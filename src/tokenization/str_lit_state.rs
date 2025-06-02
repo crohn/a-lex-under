@@ -3,6 +3,12 @@ pub struct StringLiteralState {
     pub escape: bool,
 }
 
+impl Default for StringLiteralState {
+    fn default() -> Self {
+        Self { escape: false }
+    }
+}
+
 impl StringLiteralState {
     pub fn to_escaped(&self, c: char) -> Result<char, ()> {
         if !self.escape {
@@ -17,11 +23,5 @@ impl StringLiteralState {
             't' => Ok('\t'),
             _ => Err(()),
         }
-    }
-}
-
-impl Default for StringLiteralState {
-    fn default() -> StringLiteralState {
-        StringLiteralState { escape: false }
     }
 }

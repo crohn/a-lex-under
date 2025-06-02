@@ -33,7 +33,7 @@ impl CharClass {
         }
     }
 
-    pub fn classify(c: Option<char>) -> CharClass {
+    pub fn classify(c: Option<char>) -> Self {
         match c {
             Some(UNDERSCORE) => CharClass::SymbolIdentifier(UNDERSCORE),
             Some(c @ (DOT | HYPHEN | PLUS)) => CharClass::SymbolNumericLiteral(c),

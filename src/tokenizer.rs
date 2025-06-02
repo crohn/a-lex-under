@@ -23,8 +23,8 @@ pub struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn new(scanner: Scanner<'a>) -> Tokenizer<'a> {
-        Tokenizer {
+    pub fn new(scanner: Scanner<'a>) -> Self {
+        Self {
             scanner,
             stack: Vec::new(),
             state: State::default(),

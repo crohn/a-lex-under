@@ -9,7 +9,7 @@ pub struct Scanner<'a> {
 }
 
 impl<'a> Scanner<'a> {
-    pub fn new(input: &'a str) -> Scanner<'a> {
+    pub fn new(input: &'a str) -> Self {
         let mut iterator = input.chars().peekable();
         let cursor = iterator.peek().cloned().map_or_else(
             || CursorBuilder::new().build(),
