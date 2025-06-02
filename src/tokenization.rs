@@ -6,10 +6,9 @@ pub mod str_lit_state;
 use num_lit_state::NumericLiteralState;
 use str_lit_state::StringLiteralState;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Action {
     Append(char),
-    EmitToken,
     Noop,
     Pop,
     Push,

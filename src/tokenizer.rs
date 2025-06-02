@@ -26,6 +26,19 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    fn emit(&mut self, emitter: fn(String) -> Token) -> Token {
+        emitter(mem::take(&mut self.string_buffer))
+    }
+
+    fn error(&mut self, kind: ErrorKind, state: State) -> Error {
+        Error::new(
+            kind,
+            state,
+            mem::take(&mut self.string_buffer),
+            self.scanner.cursor().clone(),
+        )
+    }
+
     fn transition_from_parse(
         &mut self,
         parse_state: &mut ParseState,
@@ -38,7 +51,7 @@ impl<'a> Tokenizer<'a> {
             StringLiteral(str_lit_state) => {
                 self.transition_from_parse_string_literal(str_lit_state)
             }
-            Symbol => Ok((Complete(Token::Symbol), EmitToken)),
+            Symbol => Ok((Complete(Token::Symbol), Noop)),
             Whitespace => self.transition_from_parse_whitespace(),
         }
     }
@@ -51,7 +64,7 @@ impl<'a> Tokenizer<'a> {
             CharClass::SymbolNumericLiteral(_)
             | CharClass::Symbol(_)
             | CharClass::Whitespace(_)
-            | CharClass::None => Ok((Complete(Token::Identifier), EmitToken)),
+            | CharClass::None => Ok((Complete(Token::Identifier), Noop)),
             CharClass::Invalid | CharClass::SymbolStringLiteral => {
                 Err((Parse(Identifier), ErrorKind::Invalid))
             }
@@ -76,7 +89,7 @@ impl<'a> Tokenizer<'a> {
             }
             (curr, next) => match (CharClass::classify(curr), CharClass::classify(next)) {
                 (CharClass::Numeric(_), CharClass::Whitespace(_) | CharClass::None) => {
-                    Ok((Complete(Token::NumericLiteral), EmitToken))
+                    Ok((Complete(Token::NumericLiteral), Noop))
                 }
                 (_, CharClass::Numeric(c) | CharClass::SymbolNumericLiteral(c)) => {
                     Ok((Parse(NumericLiteral(mem::take(num_lit_state))), Append(c)))
@@ -142,7 +155,7 @@ impl<'a> Tokenizer<'a> {
     fn transition_from_parse_whitespace(&self) -> Result<(State, Action), (State, ErrorKind)> {
         match CharClass::classify(self.scanner.cursor().next()) {
             CharClass::Whitespace(c) => Ok((Parse(Whitespace), Append(c))),
-            _ => Ok((Complete(Token::Whitespace), EmitToken)),
+            _ => Ok((Complete(Token::Whitespace), Noop)),
         }
     }
 
@@ -182,40 +195,25 @@ impl<'a> Iterator for Tokenizer<'a> {
                 End => return None,
             };
 
-            match result {
-                Ok((next_state, Append(c))) => {
-                    self.state = next_state;
+            if let Err((state, kind)) = result {
+                self.scanner.next();
+                return Some(Err(self.error(kind, state)));
+            }
+
+            if let Ok((next_state, action)) = result {
+                self.state = next_state;
+
+                if action != Noop {
                     self.scanner.next();
+                }
+
+                if let Append(c) = action {
                     self.string_buffer.push(c);
                 }
-                Ok((next_state, EmitToken)) => {
-                    if let Complete(emitter) = next_state {
-                        return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
-                    }
-                }
-                Ok((next_state, Noop)) => {
-                    self.state = next_state;
-                }
-                Ok((next_state, Pop)) => {
-                    self.scanner.next();
-                    if let Complete(emitter) = next_state {
-                        return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
-                    }
-                }
-                Ok((next_state, Push)) => {
-                    self.state = next_state;
-                    self.scanner.next();
-                }
-                Err((state, kind)) => {
-                    self.scanner.next();
+            }
 
-                    return Some(Err(Error::new(
-                        kind,
-                        state,
-                        mem::take(&mut self.string_buffer),
-                        self.scanner.cursor().clone(),
-                    )));
-                }
+            if let Complete(emitter) = self.state {
+                return Some(Ok(self.emit(emitter)));
             }
         }
     }
