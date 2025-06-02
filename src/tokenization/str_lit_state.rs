@@ -6,7 +6,7 @@ pub struct StringLiteralState {
 impl StringLiteralState {
     pub fn to_escaped(&self, c: char) -> Result<char, ()> {
         if !self.escape {
-            panic!("Expected 'escape' state when trying to escape a character.");
+            return Err(());
         }
 
         match c {
