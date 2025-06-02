@@ -32,10 +32,6 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn emit(&mut self, emitter: fn(String) -> Token) -> Token {
-        emitter(mem::take(&mut self.string_buffer))
-    }
-
     fn error(&mut self, kind: ErrorKind, state: State) -> Error {
         Error::new(
             kind,
@@ -247,7 +243,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             }
 
             if let Complete(emitter) = self.state {
-                return Some(Ok(self.emit(emitter)));
+                return Some(Ok(emitter(mem::take(&mut self.string_buffer))));
             }
         }
     }
