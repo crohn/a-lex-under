@@ -1,8 +1,12 @@
 use crate::scanner::Scanner;
-use crate::tokenization::char_class::{BACKSLASH, CharClass, DOT, HYPHEN, LOWER_E, PLUS, UPPER_E};
+use crate::tokenization::char_class::{
+    BACKSLASH, CharClass, DOT, HYPHEN, LEFT_CURLY, LOWER_E, LOWER_U, PLUS, RIGHT_CURLY, UPPER_E,
+    UPPER_U,
+};
 use crate::tokenization::error::{Error, ErrorKind};
 use crate::tokenization::num_lit_state::NumericLiteralState;
 use crate::tokenization::str_lit_state::StringLiteralState;
+use crate::tokenization::utf8_state::Utf8State;
 use crate::tokenization::{Action, ParseState, State, Token};
 use std::iter::Iterator;
 use std::mem;
@@ -47,13 +51,10 @@ impl<'a> Tokenizer<'a> {
     ) -> Result<(State, Action), (State, ErrorKind)> {
         match parse_state {
             Identifier => self.transition_from_parse_identifier(),
-            NumericLiteral(num_lit_state) => {
-                self.transition_from_parse_numeric_literal(num_lit_state)
-            }
-            StringLiteral(str_lit_state) => {
-                self.transition_from_parse_string_literal(str_lit_state)
-            }
+            NumericLiteral(num_lit_state) => self.transition_from_parse_num_lit(num_lit_state),
+            StringLiteral(str_lit_state) => self.transition_from_parse_str_lit(str_lit_state),
             Symbol => Ok((Complete(Token::Symbol), Noop)),
+            Utf8(utf8_state) => self.transition_from_parse_utf8(utf8_state),
             Whitespace => self.transition_from_parse_whitespace(),
         }
     }
@@ -73,7 +74,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse_numeric_literal(
+    fn transition_from_parse_num_lit(
         &mut self,
         num_lit_state: &mut NumericLiteralState,
     ) -> Result<(State, Action), (State, ErrorKind)> {
@@ -104,7 +105,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn transition_from_parse_string_literal(
+    fn transition_from_parse_str_lit(
         &self,
         str_lit_state: &mut StringLiteralState,
     ) -> Result<(State, Action), (State, ErrorKind)> {
@@ -136,7 +137,7 @@ impl<'a> Tokenizer<'a> {
                 Parse(StringLiteral(mem::take(str_lit_state))),
                 ErrorKind::EndOfInput,
             )),
-            // (true, Some(u | U))
+            (true, Some(LOWER_U | UPPER_U)) => Ok((Parse(Utf8(Utf8State::default())), Skip)),
             (true, Some(c)) => str_lit_state.to_escaped(c).map_or_else(
                 |()| {
                     Err((
@@ -151,6 +152,23 @@ impl<'a> Tokenizer<'a> {
                     ))
                 },
             ),
+        }
+    }
+
+    fn transition_from_parse_utf8(
+        &self,
+        utf8_state: &mut Utf8State,
+    ) -> Result<(State, Action), (State, ErrorKind)> {
+        match (self.stack.last(), self.scanner.cursor().next()) {
+            (Some(&LEFT_CURLY), Some(c @ RIGHT_CURLY)) => {
+                Ok((Codepoint(utf8_state.codepoint()), Pop(c)))
+            }
+            (Some(&LEFT_CURLY), Some(c @ ('0'..='9' | 'a'..='f' | 'A'..='F'))) => {
+                utf8_state.add(c);
+                Ok((Parse(Utf8(mem::take(utf8_state))), Skip))
+            }
+            (_, Some(c @ LEFT_CURLY)) => Ok((Parse(Utf8(mem::take(utf8_state))), Push(c))),
+            _ => Err((Parse(Utf8(mem::take(utf8_state))), ErrorKind::Invalid)),
         }
     }
 
@@ -193,6 +211,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             let result = match &mut curr_state {
                 Ready => self.transition_from_ready(),
                 Parse(parse_state) => self.transition_from_parse(parse_state),
+                Codepoint(_) => Ok((Parse(StringLiteral(StringLiteralState::default())), Noop)),
                 Complete(_) => Ok((Ready, Noop)),
                 End => return None,
             };
@@ -218,6 +237,14 @@ impl<'a> Iterator for Tokenizer<'a> {
                 }
 
                 self.state = next_state;
+            }
+
+            if let Codepoint(codepoint) = self.state {
+                if let Some(c) = char::from_u32(codepoint) {
+                    self.string_buffer.push(c);
+                } else {
+                    return Some(Err(self.error(ErrorKind::Codepoint, Codepoint(codepoint))));
+                }
             }
 
             if let Complete(emitter) = self.state {
@@ -452,6 +479,11 @@ mod test {
         assert_eq!(
             tokenize("\"hello \\\"\\n world\""),
             vec![string_literal("hello \"\n world")]
+        );
+
+        assert_eq!(
+            tokenize("\"hello \\u{2602} world\""),
+            vec![string_literal("hello ☂ world")]
         );
     }
 }

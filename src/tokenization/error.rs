@@ -23,6 +23,7 @@ impl Error {
 
 #[derive(Debug, PartialEq)]
 pub enum ErrorKind {
+    Codepoint,
     EndOfInput,
     Escape,
     Invalid,

@@ -2,9 +2,11 @@ pub mod char_class;
 pub mod error;
 pub mod num_lit_state;
 pub mod str_lit_state;
+pub mod utf8_state;
 
 use num_lit_state::NumericLiteralState;
 use str_lit_state::StringLiteralState;
+use utf8_state::Utf8State;
 
 #[derive(Debug, PartialEq)]
 pub enum Action {
@@ -20,6 +22,7 @@ pub enum State {
     Ready,
     Parse(ParseState),
     Complete(fn(String) -> Token),
+    Codepoint(u32),
     End,
 }
 
@@ -35,6 +38,7 @@ pub enum ParseState {
     NumericLiteral(NumericLiteralState),
     StringLiteral(StringLiteralState),
     Symbol,
+    Utf8(Utf8State),
     Whitespace,
 }
 

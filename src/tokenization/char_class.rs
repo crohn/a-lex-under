@@ -2,10 +2,14 @@ pub const BACKSLASH: char = '\\';
 pub const DOT: char = '.';
 pub const DOUBLE_QUOTE: char = '"';
 pub const HYPHEN: char = '-';
+pub const LEFT_CURLY: char = '{';
 pub const LOWER_E: char = 'e';
+pub const LOWER_U: char = 'u';
 pub const PLUS: char = '+';
+pub const RIGHT_CURLY: char = '}';
 pub const UNDERSCORE: char = '_';
 pub const UPPER_E: char = 'E';
+pub const UPPER_U: char = 'U';
 
 #[derive(Debug)]
 pub enum CharClass {
@@ -24,6 +28,7 @@ impl CharClass {
     pub fn is_balanced(a: Option<char>, b: char) -> bool {
         match (a, b) {
             (Some(DOUBLE_QUOTE), DOUBLE_QUOTE) => true,
+            (Some('{'), '}') => true,
             _ => false,
         }
     }
