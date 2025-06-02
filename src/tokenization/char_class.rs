@@ -24,9 +24,7 @@ impl CharClass {
     pub fn classify(c: Option<char>) -> CharClass {
         match c {
             Some(UNDERSCORE) => CharClass::SymbolIdentifier(UNDERSCORE),
-            Some(DOT) => CharClass::SymbolNumericLiteral(DOT),
-            Some(PLUS) => CharClass::SymbolNumericLiteral(PLUS),
-            Some(HYPHEN) => CharClass::SymbolNumericLiteral(HYPHEN),
+            Some(c @ (DOT | HYPHEN | PLUS)) => CharClass::SymbolNumericLiteral(c),
             Some(DOUBLE_QUOTE) => CharClass::SymbolStringLiteral,
             Some(c) if c.is_numeric() => CharClass::Numeric(c),
             Some(c) if c.is_alphabetic() => CharClass::Alphabetic(c),

@@ -71,7 +71,7 @@ impl<'a> Tokenizer<'a> {
                 |next| Err((Parse(NumericLiteral(next)), ErrorKind::Invalid)),
                 |next| Ok((Parse(NumericLiteral(next)), Append(c))),
             ),
-            (Some(UPPER_E) | Some(LOWER_E), Some(c @ (PLUS | HYPHEN))) => {
+            (Some(LOWER_E | UPPER_E), Some(c @ (PLUS | HYPHEN))) => {
                 Ok((Parse(NumericLiteral(mem::take(num_lit_state))), Append(c)))
             }
             (curr, next) => match (CharClass::classify(curr), CharClass::classify(next)) {
@@ -98,7 +98,6 @@ impl<'a> Tokenizer<'a> {
                 str_lit_state.escape = true;
                 Ok((Parse(StringLiteral(mem::take(str_lit_state))), Push))
             }
-            // FIXMEshould be valid
             (false, c) => match CharClass::classify(c) {
                 CharClass::None => Err((
                     Parse(StringLiteral(mem::take(str_lit_state))),
@@ -122,6 +121,7 @@ impl<'a> Tokenizer<'a> {
                 Parse(StringLiteral(mem::take(str_lit_state))),
                 ErrorKind::EndOfInput,
             )),
+            // (true, Some(u | U))
             (true, Some(c)) => str_lit_state.to_escaped(c).map_or_else(
                 |()| {
                     Err((
@@ -203,8 +203,8 @@ impl<'a> Iterator for Tokenizer<'a> {
                     }
                 }
                 Ok((next_state, Push)) => {
-                    self.scanner.next();
                     self.state = next_state;
+                    self.scanner.next();
                 }
                 Err((state, kind)) => {
                     self.scanner.next();
